@@ -1,13 +1,29 @@
+<div align="center">
+
+<img src="assets/readme-hero.gif" width="220" alt="LM Link — LM Studio logo with Android head" />
+
 # LM Link for Android
+
+**A free, open-source Android client for [LM Studio](https://lmstudio.ai)**
+
+Chat with models on your Mac or PC over Wi‑Fi, or run GGUF models on-device with [llama.cpp](https://github.com/ggerganov/llama.cpp) via [llama.rn](https://github.com/mybigday/llama.rn).
+
+<br />
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Expo SDK 54](https://img.shields.io/badge/Expo-SDK%2054-000020?logo=expo)](https://expo.dev)
+[![Android](https://img.shields.io/badge/Platform-Android-3DDC84?logo=android&logoColor=white)](#using-the-app)
+[![Open Source](https://img.shields.io/badge/Open%20Source-issues%20%26%20PRs%20welcome-brightgreen)](#contributing--issues)
 
-**LM Link** is a free, open-source Android client for [LM Studio](https://lmstudio.ai). Chat with models running on your Mac or PC over Wi‑Fi, or download and run quantized GGUF models on your phone with [llama.cpp](https://github.com/ggerganov/llama.cpp) via [llama.rn](https://github.com/mybigday/llama.rn).
+<br />
 
-> **Independent project** — LM Link is not affiliated with, endorsed by, or sponsored by LM Studio or Element Labs Inc.
+[Report a bug](https://github.com/Dead-Stone/lm-link/issues/new) · [Request a feature](https://github.com/Dead-Stone/lm-link/issues/new) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
-**[Report a bug](https://github.com/Dead-Stone/lm-link/issues/new)** · **[Request a feature](https://github.com/Dead-Stone/lm-link/issues/new)** · **[Contributing](CONTRIBUTING.md)** · **[Security](SECURITY.md)**
+<br />
+
+<sub>Independent project — not affiliated with, endorsed by, or sponsored by LM Studio or Element Labs Inc.</sub>
+
+</div>
 
 ---
 
@@ -96,7 +112,7 @@ npx expo start
 | Production AAB (local) | `npm run build:aab:local` → `builds/` |
 | Production AAB (EAS cloud) | `npm run build:aab` |
 
-Patches under [`patches/`](patches/) are applied automatically on `npm install`. See [CONTRIBUTING.md](CONTRIBUTING.md) for code style and PR workflow.
+Patches under [`patches/`](patches/) are applied automatically on `npm install`. Regenerate the README hero GIF with `npm run compose-readme-hero`. See [CONTRIBUTING.md](CONTRIBUTING.md) for code style and PR workflow.
 
 ### Tech stack
 

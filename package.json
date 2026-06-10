@@ -74,6 +74,7 @@
     "web": "expo start --web",
     "install-llama-rn": "node scripts/install-llama-rn.js",
     "compose-brand-icons": "node scripts/compose-brand-icons.mjs",
+    "compose-readme-hero": "node scripts/compose-readme-hero.mjs",
     "eas-build-post-install": "node scripts/install-llama-rn.js && node scripts/write-android-local-properties.js",
     "build:apk:local": "bash scripts/build-android-local.sh preview",
     "build:apk:local:debug": "bash scripts/build-android-local.sh development",

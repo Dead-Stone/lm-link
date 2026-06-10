@@ -8,7 +8,8 @@
       "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "RNLLAMA_SKIP_POSTINSTALL": "1"
+        "RNLLAMA_SKIP_POSTINSTALL": "1",
+        "EAS_FALLBACK_PACKAGE_MANAGER": "npm"
       },
       "android": {
         "buildType": "apk"
@@ -17,7 +18,8 @@
     "preview": {
       "distribution": "internal",
       "env": {
-        "RNLLAMA_SKIP_POSTINSTALL": "1"
+        "RNLLAMA_SKIP_POSTINSTALL": "1",
+        "EAS_FALLBACK_PACKAGE_MANAGER": "npm"
       },
       "android": {
         "buildType": "apk"
@@ -27,7 +29,8 @@
       "autoIncrement": true,
       "env": {
         "RNLLAMA_SKIP_POSTINSTALL": "1",
-        "EAS_BUILD_NO_EXPO_GO_WARNING": "true"
+        "EAS_BUILD_NO_EXPO_GO_WARNING": "true",
+        "EAS_FALLBACK_PACKAGE_MANAGER": "npm"
       },
       "android": {
         "buildType": "app-bundle"

@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/readme-hero.gif" width="220" alt="LM Link — LM Studio logo with Android head" />
+<img src="assets/readme-hero.gif" width="220" alt="LM Link — LM Studio logo with animated Android head (opening splash)" />
 
 # LM Link for Android
 
@@ -112,7 +112,7 @@ npx expo start
 | Production AAB (local) | `npm run build:aab:local` → `builds/` |
 | Production AAB (EAS cloud) | `npm run build:aab` |
 
-Patches under [`patches/`](patches/) are applied automatically on `npm install`. Regenerate the README hero GIF with `npm run compose-readme-hero`. See [CONTRIBUTING.md](CONTRIBUTING.md) for code style and PR workflow.
+Patches under [`patches/`](patches/) are applied automatically on `npm install`. Regenerate the README hero (`assets/readme-hero.gif`) from `assets/android-face-overlay.json` with `npm run compose-readme-hero`. See [CONTRIBUTING.md](CONTRIBUTING.md) for code style and PR workflow.
 
 ### Tech stack
 

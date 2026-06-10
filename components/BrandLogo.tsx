@@ -66,7 +66,7 @@ export default function BrandLogo({
   ) : null;
 
   return (
-    <View style={[wrapStyle, styles.shell, { width: box, height: box }, cornerMask]}>
+    <View style={[wrapStyle, styles.shell, { width: box, height: box }]}>
       <View style={[styles.clip, { width: box, height: box }, cornerMask]}>{logo}</View>
       {androidHead}
     </View>

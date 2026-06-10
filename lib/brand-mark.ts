@@ -2,8 +2,6 @@ import { ViewStyle } from "react-native";
 
 /** iOS-style squircle on three corners. */
 export const BRAND_MARK_SQUIRCLE_RATIO = 0.2237;
-/** Sharp bottom-right corner where the Android badge sits. */
-export const BRAND_MARK_SHARP_RATIO = 0.036;
 /** Android badge flush to the bottom-right mark edge. */
 export const BRAND_MARK_BADGE_INSET_RATIO = 0;
 /** android-badge.png — height ÷ width (wide asset; bottom-align in square slot). */
@@ -19,12 +17,11 @@ export type BrandMarkCornerMask = Pick<
 /** App icon mask — three curved corners, one sharp corner at bottom-right. */
 export function brandMarkCornerMask(box: number): BrandMarkCornerMask {
   const r = box * BRAND_MARK_SQUIRCLE_RATIO;
-  const sharp = Math.max(4, Math.round(box * BRAND_MARK_SHARP_RATIO));
   return {
     borderTopLeftRadius: r,
     borderTopRightRadius: r,
     borderBottomLeftRadius: r,
-    borderBottomRightRadius: sharp,
+    borderBottomRightRadius: 0,
   };
 }
 

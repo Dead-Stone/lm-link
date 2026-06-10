@@ -136,14 +136,15 @@ export default function AppOpeningAnimation({ onFinish }: { onFinish: () => void
           <Animated.View
             style={[
               styles.markAnchor,
-              markCorners,
               {
                 opacity: markOpacity,
                 transform: [{ scale: markScale }],
               },
             ]}
           >
-            <Image source={lmStudioLogo} style={styles.markLogo} resizeMode="cover" />
+            <View style={[styles.markClip, markCorners]}>
+              <Image source={lmStudioLogo} style={styles.markLogo} resizeMode="cover" />
+            </View>
 
             <Animated.View style={[styles.badgeLayer, { opacity: badgeOpacity }]}>
               <LottieView
@@ -210,6 +211,9 @@ function createStyles(appBg: string) {
     markAnchor: {
       width: MARK_BOX,
       height: MARK_BOX,
+    },
+    markClip: {
+      ...StyleSheet.absoluteFillObject,
       overflow: "hidden",
     },
     markLogo: {

@@ -18,8 +18,11 @@ const BRAND_BADGE_SIZE_RATIO = 0.35;
 /** Flush to bottom-right — keep in sync with lib/brand-mark.ts */
 const BRAND_BADGE_INSET_RATIO = 0;
 const LOGO_EDGE_PADDING_RATIO = 0.09;
-/** Android adaptive icon — keep artwork inside ~66% safe circle */
-const ADAPTIVE_CONTENT_SCALE = 0.74;
+/**
+ * Android adaptive icon — keep the sharp bottom-right (badge corner) inside the
+ * ~66% launcher safe circle: max side ≈ safeRadius × √2.
+ */
+const ADAPTIVE_SAFE_ZONE_RADIUS_RATIO = 0.33;
 
 const PNG_OPTS = { compressionLevel: 9, palette: true, effort: 10 };
 
@@ -112,7 +115,8 @@ for (const name of [
 }
 
 const adaptiveSize = 1024;
-const contentSize = Math.round(adaptiveSize * ADAPTIVE_CONTENT_SCALE);
+const adaptiveSafeRadius = adaptiveSize * ADAPTIVE_SAFE_ZONE_RADIUS_RATIO;
+const contentSize = Math.round(adaptiveSafeRadius * Math.SQRT2);
 const adaptiveContent = await buildBrandLogo(contentSize);
 const offset = Math.round((adaptiveSize - contentSize) / 2);
 

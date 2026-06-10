@@ -4,9 +4,12 @@
  */
 export const GITHUB_REPO = "https://github.com/Dead-Stone/lm-link";
 
-export const PRIVACY_POLICY_URL = `${GITHUB_REPO}/blob/main/docs/PRIVACY.md`;
+/** Public site — enable GitHub Pages: Settings → Pages → branch `master`, folder `/docs`. */
+export const GITHUB_PAGES_BASE = "https://dead-stone.github.io/lm-link";
 
-export const THIRD_PARTY_NOTICES_URL = `${GITHUB_REPO}/blob/main/docs/THIRD_PARTY_NOTICES.md`;
+export const PRIVACY_POLICY_URL = `${GITHUB_PAGES_BASE}/`;
+
+export const THIRD_PARTY_NOTICES_URL = `${GITHUB_PAGES_BASE}/THIRD_PARTY_NOTICES.html`;
 
 export const SOURCE_CODE_URL = GITHUB_REPO;
 

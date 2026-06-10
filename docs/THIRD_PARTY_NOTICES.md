@@ -1,6 +1,12 @@
+---
+title: Third-Party Notices — LM Link for Android
+---
+
 # Third-Party Notices — LM Link for Android
 
-LM Link for Android includes open-source software and other materials from third parties. The app’s **source code** is licensed under the [MIT License](../LICENSE).
+[Privacy policy](index.html)
+
+LM Link for Android includes open-source software and other materials from third parties. The app's **source code** is licensed under the [MIT License](https://github.com/Dead-Stone/lm-link/blob/main/LICENSE).
 
 Below is a non-exhaustive list of major components. Each project is subject to its own license. Full license texts are available from the respective projects and in your dependency tree (`node_modules`, native build outputs).
 
@@ -56,11 +62,11 @@ Below is a non-exhaustive list of major components. Each project is subject to i
 
 ## Downloaded model weights
 
-Models you download (from the in-app catalog, Hugging Face, or LM Studio) are **not** part of LM Link’s source license. Each model may be governed by its own license (e.g. Llama, Gemma, Qwen, Apache-2.0, custom terms). You are responsible for complying with the license of each model you download and use.
+Models you download (from the in-app catalog, Hugging Face, or LM Studio) are **not** part of LM Link's source license. Each model may be governed by its own license (e.g. Llama, Gemma, Qwen, Apache-2.0, custom terms). You are responsible for complying with the license of each model you download and use.
 
 ## LM Studio
 
-[LM Studio](https://lmstudio.ai) is separate software you install on your computer. LM Link communicates with your LM Studio instance; LM Studio’s terms and licenses apply to that software and to models you manage there.
+[LM Studio](https://lmstudio.ai) is separate software you install on your computer. LM Link communicates with your LM Studio instance; LM Studio's terms and licenses apply to that software and to models you manage there.
 
 ## Questions
 

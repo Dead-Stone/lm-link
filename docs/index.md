@@ -8,9 +8,6 @@ title: Privacy Policy — LM Link for Android
 **App:** LM Link for Android (`com.lmlink.android`)  
 **Contact:** [mohanmoganti2023@gmail.com](mailto:mohanmoganti2023@gmail.com)
 
-> **Published URL:** [https://dead-stone.github.io/lm-link/](https://dead-stone.github.io/lm-link/)  
-> Keep this file in sync with `docs/index.md` when you update the policy.
-
 [Third-party notices](THIRD_PARTY_NOTICES.html)
 
 ## Summary
@@ -66,7 +63,7 @@ You can deny camera or media access and still use text chat and remote models.
 
 - Conversations and settings remain on your device until you delete them in the app or use **Settings → Clear All Data**.
 - Uninstalling the app removes app data from your device subject to Android behavior.
-- Downloaded on-device model files are stored in the app's private storage and removed when you delete them in the Model Library or clear app data.
+- Downloaded on-device model files are stored in the app’s private storage and removed when you delete them in the Model Library or clear app data.
 
 ## Children's privacy
 

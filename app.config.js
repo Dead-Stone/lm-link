@@ -1,12 +1,12 @@
-import type { ExpoConfig } from "expo/config";
-
 // Keep in sync with lib/app-name.ts and lib/app-id.ts
 const APP_DISPLAY_NAME = "LM Link for Android";
 const ANDROID_PACKAGE = "com.lmlink.android";
 
-const config: ExpoConfig = {
+/** @type {import('expo/config').ExpoConfig} */
+const config = {
   name: APP_DISPLAY_NAME,
   slug: "lm-link",
+  owner: "mohana-moganti",
   version: "1.0.0",
   sdkVersion: "54.0.0",
   orientation: "portrait",
@@ -71,9 +71,9 @@ const config: ExpoConfig = {
   extra: {
     router: {},
     eas: {
-      projectId: "0db5210e-f19d-4e07-a557-1542426e56dd",
+      projectId: "2d945c44-03ba-42c9-8362-e77279802b2b",
     },
   },
 };
 
-export default config;
+module.exports = config;

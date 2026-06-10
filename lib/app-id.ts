@@ -1,4 +1,4 @@
-/** Android application ID (Play Store). Keep in sync with app.config.ts `android.package`. */
+/** Android application ID (Play Store). Keep in sync with app.config.js `android.package`. */
 export const ANDROID_PACKAGE = "com.lmlink.android";
 
 export {

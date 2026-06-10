@@ -6,7 +6,7 @@ const HF_MAX_RATE_LIMIT_RETRIES = 3;
 const HF_DEFAULT_RATE_LIMIT_WAIT_SEC = 60;
 
 export type HuggingFaceAuthOptions = {
-  /** User token from Settings; falls back to `EXPO_PUBLIC_HF_TOKEN`. */
+  /** User token from Settings (SecureStore). */
   hfToken?: string;
 };
 
@@ -18,11 +18,15 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Settings token first, then dev token from `.env`. */
+/** Settings token first; dev `.env` token only in `__DEV__` when no proxy is configured. */
 export function resolveHuggingFaceToken(options?: HuggingFaceAuthOptions): string {
   const user = sanitizeApiToken(options?.hfToken ?? "");
   if (user) return user;
-  return trimEnv(process.env.EXPO_PUBLIC_HF_TOKEN);
+  if (trimEnv(process.env.EXPO_PUBLIC_HF_PROXY_URL)) return "";
+  if (__DEV__) {
+    return trimEnv(process.env.EXPO_PUBLIC_HF_TOKEN);
+  }
+  return "";
 }
 
 export function resolveHuggingFaceApiBase(): string {

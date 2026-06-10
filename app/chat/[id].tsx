@@ -777,7 +777,7 @@ export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const { keyboardHeight, composerLift } = useKeyboardInset();
   const composerBottom = composerDockBottom(insets.bottom, keyboardHeight, composerLift);
-  const inputFooterBottom = 8;
+  const inputFooterBottom = 6;
   const footerSolidStripHeight = footerBottomPadding(
     insets.bottom,
     keyboardHeight,
@@ -822,6 +822,7 @@ export default function ChatScreen() {
   // Attachments
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
+  const attachBtnRotate = useRef(new Animated.Value(0)).current;
   const [remoteModelCatalog, setRemoteModelCatalog] = useState<LMModel[]>([]);
 
   // Mode
@@ -1632,6 +1633,22 @@ export default function ChatScreen() {
     setGestureEnabled(!showModelPicker && !showAttachMenu);
   }, [setGestureEnabled, showModelPicker, showAttachMenu]);
 
+  useEffect(() => {
+    Animated.spring(attachBtnRotate, {
+      toValue: showAttachMenu ? 1 : 0,
+      useNativeDriver: true,
+      damping: 20,
+      stiffness: 140,
+      mass: 0.9,
+      overshootClamping: true,
+    }).start();
+  }, [showAttachMenu, attachBtnRotate]);
+
+  const attachIconRotate = attachBtnRotate.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "45deg"],
+  });
+
   // ─── Send message ──────────────────────────────────────────────────────────
 
   const sendMessage = useCallback(async () => {
@@ -2032,8 +2049,7 @@ export default function ChatScreen() {
                   onPress={() => setShowAttachMenu((open) => !open)}
                   style={({ pressed }) => [
                     styles.attachBtn,
-                    showAttachMenu && styles.attachBtnOpen,
-                    !showAttachMenu && attachments.length > 0 && styles.attachBtnStaged,
+                    attachments.length > 0 && styles.attachBtnStaged,
                     pressed && styles.attachBtnPressed,
                   ]}
                   hitSlop={4}
@@ -2041,17 +2057,15 @@ export default function ChatScreen() {
                   accessibilityState={{ selected: showAttachMenu, expanded: showAttachMenu }}
                   accessibilityLabel="Add attachment"
                 >
-                  <Ionicons
-                    name={showAttachMenu ? "close" : "add"}
-                    size={22}
-                    color={
-                      showAttachMenu
-                        ? chatColors.modelAccent
-                        : attachments.length > 0
-                          ? chatColors.modelAccent
-                          : chatColors.inputIcon
-                    }
-                  />
+                  <Animated.View style={{ transform: [{ rotate: attachIconRotate }] }}>
+                    <Ionicons
+                      name="add"
+                      size={22}
+                      color={
+                        attachments.length > 0 ? chatColors.modelAccent : chatColors.inputIcon
+                      }
+                    />
+                  </Animated.View>
                 </Pressable>
                 {showAttachMenu ? (
                   <AttachMenuPopover
@@ -2177,8 +2191,6 @@ export default function ChatScreen() {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 function createMainChatStyles(colors: ThemeColors, chat: ChatColors, isDark: boolean) {
-  const footerChromeBg = isDark ? "#000000" : "#ffffff";
-
   return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg, overflow: "hidden" },
   chatBody: { flex: 1, position: "relative" },
@@ -2376,12 +2388,12 @@ function createMainChatStyles(colors: ThemeColors, chat: ChatColors, isDark: boo
     minWidth: 0,
     minHeight: 20,
     paddingTop: 2,
-    paddingBottom: 8,
-    backgroundColor: footerChromeBg,
+    paddingBottom: 0,
+    backgroundColor: colors.bg,
   },
   footerSolidStrip: {
     marginHorizontal: -12,
-    backgroundColor: footerChromeBg,
+    backgroundColor: colors.bg,
   },
   footerModelPicker: {
     flexDirection: "row",
@@ -2444,15 +2456,6 @@ function createMainChatStyles(colors: ThemeColors, chat: ChatColors, isDark: boo
     backgroundColor: chat.inputBg,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "transparent",
-  },
-  attachBtnOpen: {
-    backgroundColor: colors.bgElevated,
-    borderColor: isDark ? colors.primaryBorder : "rgba(139,92,246,0.35)",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: isDark ? 0.35 : 0.14,
-    shadowRadius: 10,
-    elevation: 6,
   },
   attachBtnStaged: {
     borderColor: isDark ? colors.primaryBorder : "rgba(139,92,246,0.22)",

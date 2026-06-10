@@ -91,16 +91,14 @@ export function keyboardLift(keyboardHeight: number, composerLift?: number): num
   return lift > 0 ? lift : 0;
 }
 
-const COMPOSER_DOCK_GAP = 10;
-
 /** Bottom offset for an absolutely positioned composer dock. */
 export function composerDockBottom(
-  safeAreaBottom: number,
+  _safeAreaBottom: number,
   keyboardHeight: number,
   composerLift: number,
-  gap = COMPOSER_DOCK_GAP
+  gap = 0
 ): number {
-  if (keyboardHeight <= 0) return safeAreaBottom + gap;
+  if (keyboardHeight <= 0) return 0;
   return composerLift + gap;
 }
 

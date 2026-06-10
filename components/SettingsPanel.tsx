@@ -45,6 +45,7 @@ import { LMAccount, sanitizeApiToken, saveAccount } from "../lib/auth";
 import { normalizeServerInputUrl } from "../lib/connection-string";
 import { formatServerHost, resolveServerDisplayName } from "../lib/scan-device-names";
 import { useApp } from "../lib/context";
+import { SecureCredentialError } from "../lib/storage";
 import { Settings } from "../lib/types";
 import { createModalTheme } from "../lib/modal-theme";
 import { createScreenHeaderTitleStyle } from "../lib/typography";
@@ -956,25 +957,35 @@ export default function SettingsPanel() {
     }
     if (!url) return;
     setSavingLocal(true);
-    const token = sanitizeApiToken(localApiToken);
-    const hfToken = sanitizeApiToken(localHfToken);
-    const patch: Partial<typeof settings> = {
-      ...(token ? { apiKey: token } : {}),
-      hfToken: hfToken || undefined,
-    };
-    if (isHubUrl(settings.baseUrl)) {
-      await updateSettings({ ...patch, localServerUrl: url });
-    } else {
-      await updateSettings({ ...patch, baseUrl: url, localServerUrl: url });
+    try {
+      const token = sanitizeApiToken(localApiToken);
+      const hfToken = sanitizeApiToken(localHfToken);
+      const patch: Partial<typeof settings> = {
+        ...(token ? { apiKey: token } : {}),
+        hfToken: hfToken || undefined,
+      };
+      if (isHubUrl(settings.baseUrl)) {
+        await updateSettings({ ...patch, localServerUrl: url });
+      } else {
+        await updateSettings({ ...patch, baseUrl: url, localServerUrl: url });
+      }
+      if (account && token) {
+        const updated = { ...account, token };
+        await saveAccount(updated);
+        setAccount(updated);
+      }
+      setConnStatus("idle");
+      setConnMessage("");
+    } catch (error) {
+      setConnStatus("error");
+      setConnMessage(
+        error instanceof SecureCredentialError
+          ? error.message
+          : "Could not save connection settings"
+      );
+    } finally {
+      setSavingLocal(false);
     }
-    if (account && token) {
-      const updated = { ...account, token };
-      await saveAccount(updated);
-      setAccount(updated);
-    }
-    setSavingLocal(false);
-    setConnStatus("idle");
-    setConnMessage("");
   }, [localBaseUrl, localApiToken, localHfToken, updateSettings, settings.baseUrl, account, setAccount]);
 
   const localModelInfo = LOCAL_MODEL_CATALOG.find((m) => m.key === settings.defaultLocalModel);

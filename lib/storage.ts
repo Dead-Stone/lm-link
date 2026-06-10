@@ -1,5 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as SecureStore from "expo-secure-store";
 import { stripConversationForStorage } from "./conversation-storage";
+import { sanitizeApiToken } from "./auth";
 import { ConnectionProfile, Conversation, Settings } from "./types";
 
 const KEYS = {
@@ -8,6 +10,22 @@ const KEYS = {
   ACTIVE_CONVERSATION: "lmlink:active_conversation",
   ONBOARDING_DONE: "lmlink:onboarding_done",
 };
+
+const SECURE_KEYS = {
+  HF_TOKEN: "lmlink:hf_token",
+  API_KEY: "lmlink:api_key",
+} as const;
+
+const SECURE_STORE_OPTIONS: SecureStore.SecureStoreOptions = {
+  keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+};
+
+export class SecureCredentialError extends Error {
+  constructor(message = "Could not save credentials securely. Try again.") {
+    super(message);
+    this.name = "SecureCredentialError";
+  }
+}
 
 export const DEFAULT_SETTINGS: Settings = {
   baseUrl: "http://localhost:1234/v1",
@@ -22,20 +40,158 @@ export const DEFAULT_SETTINGS: Settings = {
   connectionProfiles: [],
 };
 
+async function readSecureToken(key: string): Promise<string | undefined> {
+  try {
+    const token = await SecureStore.getItemAsync(key, SECURE_STORE_OPTIONS);
+    const clean = sanitizeApiToken(token ?? "");
+    return clean || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeSecureToken(key: string, token: string | undefined): Promise<boolean> {
+  try {
+    const clean = token ? sanitizeApiToken(token) : "";
+    if (clean) {
+      await SecureStore.setItemAsync(key, clean, SECURE_STORE_OPTIONS);
+    } else {
+      await SecureStore.deleteItemAsync(key, SECURE_STORE_OPTIONS);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function clearSecureToken(key: string): Promise<void> {
+  try {
+    await SecureStore.deleteItemAsync(key, SECURE_STORE_OPTIONS);
+  } catch {
+    /* ignore */
+  }
+}
+
+async function readSecureHfToken(): Promise<string | undefined> {
+  return readSecureToken(SECURE_KEYS.HF_TOKEN);
+}
+
+async function writeSecureHfToken(token: string | undefined): Promise<boolean> {
+  return writeSecureToken(SECURE_KEYS.HF_TOKEN, token);
+}
+
+async function readSecureApiKey(): Promise<string | undefined> {
+  return readSecureToken(SECURE_KEYS.API_KEY);
+}
+
+async function writeSecureApiKey(token: string | undefined): Promise<boolean> {
+  return writeSecureToken(SECURE_KEYS.API_KEY, token);
+}
+
+async function clearAllSecureCredentials(): Promise<void> {
+  await Promise.all([
+    clearSecureToken(SECURE_KEYS.HF_TOKEN),
+    clearSecureToken(SECURE_KEYS.API_KEY),
+  ]);
+}
+
+type PersistedSettings = Omit<Settings, "hfToken" | "apiKey">;
+
+function stripSecretsFromSettingsPayload(settings: Settings): PersistedSettings {
+  const { hfToken: _hfToken, apiKey: _apiKey, ...rest } = settings;
+  const profiles = settings.connectionProfiles?.map((profile) => {
+    const { apiKey: _profileApiKey, ...safeProfile } = profile;
+    return safeProfile;
+  });
+  return {
+    ...rest,
+    ...(profiles ? { connectionProfiles: profiles } : {}),
+  };
+}
+
+function legacyApiKeyFromSettings(parsed: Settings): string {
+  const settingsKey = parsed.apiKey ? sanitizeApiToken(parsed.apiKey) : "";
+  if (settingsKey) return settingsKey;
+  for (const profile of parsed.connectionProfiles ?? []) {
+    const profileKey = profile.apiKey ? sanitizeApiToken(profile.apiKey) : "";
+    if (profileKey) return profileKey;
+  }
+  return "";
+}
+
+function settingsPayloadHasLegacySecrets(parsed: Settings): boolean {
+  return (
+    Boolean(parsed.hfToken) ||
+    Boolean(parsed.apiKey) ||
+    (parsed.connectionProfiles ?? []).some((profile) => Boolean(profile.apiKey))
+  );
+}
+
+async function attachSecureCredentials(parsed: Settings): Promise<Settings> {
+  const legacyHfToken = parsed.hfToken ? sanitizeApiToken(parsed.hfToken) : "";
+  const legacyApiKey = legacyApiKeyFromSettings(parsed);
+  const secureHfToken = await readSecureHfToken();
+  const secureApiKey = await readSecureApiKey();
+
+  const hfToken = secureHfToken ?? (legacyHfToken || undefined);
+  const apiKey = secureApiKey ?? (legacyApiKey || undefined);
+
+  let hfReady = Boolean(secureHfToken) || !legacyHfToken;
+  let apiReady = Boolean(secureApiKey) || !legacyApiKey;
+
+  if (legacyHfToken && !secureHfToken) {
+    hfReady = await writeSecureHfToken(hfToken);
+  }
+
+  if (legacyApiKey && !secureApiKey) {
+    apiReady = await writeSecureApiKey(apiKey);
+  }
+
+  if (settingsPayloadHasLegacySecrets(parsed) && hfReady && apiReady) {
+    await AsyncStorage.setItem(
+      KEYS.SETTINGS,
+      JSON.stringify(stripSecretsFromSettingsPayload(parsed))
+    );
+  }
+
+  return { ...stripSecretsFromSettingsPayload(parsed), hfToken, apiKey };
+}
+
+async function persistSecureCredentials(settings: Settings): Promise<void> {
+  const hfToken = settings.hfToken ? sanitizeApiToken(settings.hfToken) : undefined;
+  const apiKey = settings.apiKey ? sanitizeApiToken(settings.apiKey) : undefined;
+
+  const [hfOk, apiOk] = await Promise.all([
+    writeSecureHfToken(hfToken),
+    writeSecureApiKey(apiKey),
+  ]);
+
+  if (!hfOk || !apiOk) {
+    throw new SecureCredentialError();
+  }
+}
+
 // ─── Settings ─────────────────────────────────────────────────────────────────
 
 export async function getSettings(): Promise<Settings> {
   try {
     const raw = await AsyncStorage.getItem(KEYS.SETTINGS);
-    if (!raw) return DEFAULT_SETTINGS;
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    const parsed = raw
+      ? ({ ...DEFAULT_SETTINGS, ...JSON.parse(raw) } as Settings)
+      : { ...DEFAULT_SETTINGS };
+    return attachSecureCredentials(parsed);
   } catch {
-    return DEFAULT_SETTINGS;
+    const [hfToken, apiKey] = await Promise.all([readSecureHfToken(), readSecureApiKey()]);
+    return { ...DEFAULT_SETTINGS, hfToken, apiKey };
   }
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {
-  await AsyncStorage.setItem(KEYS.SETTINGS, JSON.stringify(settings));
+  await persistSecureCredentials(settings);
+  await AsyncStorage.setItem(
+    KEYS.SETTINGS,
+    JSON.stringify(stripSecretsFromSettingsPayload(settings))
+  );
 }
 
 // ─── Conversations ─────────────────────────────────────────────────────────────
@@ -108,6 +264,7 @@ export async function markOnboardingDone(): Promise<void> {
 /** Wipe all persisted app data (settings, chats, onboarding, etc.). */
 export async function clearAllAppData(): Promise<void> {
   await AsyncStorage.clear();
+  await clearAllSecureCredentials();
 }
 
 // ─── Connection Profiles ──────────────────────────────────────────────────────

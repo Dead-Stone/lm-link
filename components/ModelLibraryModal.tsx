@@ -743,6 +743,7 @@ function UnifiedModelLibrary({
   const [webEntries, setWebEntries] = useState<RemoteLibraryEntry[]>([]);
   const [catalogPage, setCatalogPage] = useState(0);
   const [catalogHasMore, setCatalogHasMore] = useState(false);
+  const [trendingLmPage, setTrendingLmPage] = useState(0);
   const [trendingHasMore, setTrendingHasMore] = useState(false);
   const [hfBrowseNextUrl, setHfBrowseNextUrl] = useState<string | null>(null);
   const [hfBrowseStarted, setHfBrowseStarted] = useState(false);
@@ -784,6 +785,7 @@ function UnifiedModelLibrary({
   const catalogRequestRef = useRef(0);
   const trendingRequestRef = useRef(0);
   const webRequestRef = useRef(0);
+  const hfBrowseLoadingRef = useRef(false);
 
   const directDownloadEntry = useMemo(
     () => (search.trim() ? buildDirectDownloadEntry(search) : null),
@@ -807,7 +809,7 @@ function UnifiedModelLibrary({
       curatedDownloadEntries,
       catalogEntries,
       webEntries,
-      ...(directDownloadEntry ? [directDownloadEntry] : []),
+      ...(directDownloadEntry ? [[directDownloadEntry]] : []),
     ]);
   }, [
     isSearching,
@@ -956,6 +958,7 @@ function UnifiedModelLibrary({
         setTrendingLoading(true);
         setTrendingEntries([]);
         setTrendingHasMore(false);
+        setTrendingLmPage(0);
         setHfBrowseNextUrl(null);
         setHfBrowseStarted(false);
 
@@ -972,6 +975,7 @@ function UnifiedModelLibrary({
           if (requestId !== trendingRequestRef.current) return;
 
           setTrendingEntries(dedupeCatalogEntries(lmPage.entries));
+          setTrendingLmPage(0);
           setTrendingHasMore(lmPage.hasMore);
         } catch (e: unknown) {
           if (requestId !== trendingRequestRef.current) return;
@@ -990,6 +994,7 @@ function UnifiedModelLibrary({
         setTrendingLoading(true);
         setTrendingEntries([]);
         setTrendingHasMore(false);
+        setTrendingLmPage(0);
         setHfBrowseNextUrl(null);
         setHfBrowseStarted(false);
       } else {
@@ -1011,6 +1016,7 @@ function UnifiedModelLibrary({
         setTrendingEntries((prev) =>
           dedupeCatalogEntries(reset ? lmPage.entries : [...prev, ...lmPage.entries])
         );
+        setTrendingLmPage(page);
         setTrendingHasMore(lmPage.hasMore);
       } catch (e: unknown) {
         if (requestId !== trendingRequestRef.current) return;
@@ -1053,6 +1059,7 @@ function UnifiedModelLibrary({
       setWebNextUrl(null);
       setHfBrowseNextUrl(null);
       setHfBrowseStarted(false);
+      setTrendingLmPage(0);
       setTrendingLoading(true);
       setCatalogLoading(false);
       setWebSearchLoading(false);
@@ -1105,6 +1112,7 @@ function UnifiedModelLibrary({
     setTrendingHasMore(false);
     setHfBrowseNextUrl(null);
     setHfBrowseStarted(false);
+    setTrendingLmPage(0);
     setTrendingLoading(true);
     const timer = setTimeout(() => {
       void loadTrendingPage(0, true);
@@ -1180,8 +1188,9 @@ function UnifiedModelLibrary({
 
   const loadHfBrowsePage = useCallback(
     async (cursor: string | null) => {
-      if (catalogLoadingMore) return;
+      if (hfBrowseLoadingRef.current) return;
       if (cursor == null && hfBrowseStarted) return;
+      hfBrowseLoadingRef.current = true;
       setCatalogLoadingMore(true);
       try {
         const page = await fetchTrendingHuggingFaceModels({
@@ -1200,10 +1209,11 @@ function UnifiedModelLibrary({
         setHfBrowseStarted(true);
         setHfBrowseNextUrl(null);
       } finally {
+        hfBrowseLoadingRef.current = false;
         setCatalogLoadingMore(false);
       }
     },
-    [catalogLoadingMore, hfBrowseStarted, installedIds, browseFilters.capability, hfAuth]
+    [hfBrowseStarted, installedIds, browseFilters.capability, hfAuth]
   );
 
   const loadMoreWebEntries = useCallback(async () => {
@@ -1241,8 +1251,7 @@ function UnifiedModelLibrary({
       return;
     }
     if (trendingHasMore && !trendingLoading && !catalogLoadingMore) {
-      const nextPage = Math.ceil(trendingEntries.length / LM_STUDIO_CATALOG_PAGE_SIZE);
-      void loadTrendingPage(nextPage, false);
+      void loadTrendingPage(trendingLmPage + 1, false);
       return;
     }
     if (!hfBrowseStarted && !catalogLoadingMore) {
@@ -1266,7 +1275,7 @@ function UnifiedModelLibrary({
     loadMoreWebEntries,
     trendingHasMore,
     trendingLoading,
-    trendingEntries.length,
+    trendingLmPage,
     loadTrendingPage,
     hfBrowseStarted,
     hfBrowseNextUrl,

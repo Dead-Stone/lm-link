@@ -23,6 +23,10 @@ export interface LMAccount {
 
 const STORE_KEY = "lmlink:account";
 
+const SECURE_STORE_OPTIONS: SecureStore.SecureStoreOptions = {
+  keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+};
+
 const HUB_UNAVAILABLE =
   "Hub connection is not available yet. Use your local server URL (http://YOUR-MAC-IP:1234/v1).";
 
@@ -115,14 +119,14 @@ export async function signInWithConnectionString(
 
 export async function signOut(): Promise<void> {
   try {
-    await SecureStore.deleteItemAsync(STORE_KEY);
+    await SecureStore.deleteItemAsync(STORE_KEY, SECURE_STORE_OPTIONS);
   } catch {
     // Key may already be absent — treat as signed out.
   }
 }
 
 export async function saveAccount(account: LMAccount): Promise<void> {
-  await SecureStore.setItemAsync(STORE_KEY, JSON.stringify(account));
+  await SecureStore.setItemAsync(STORE_KEY, JSON.stringify(account), SECURE_STORE_OPTIONS);
 }
 
 /** Persist an LM Studio API token for local download/load/unload. */
@@ -146,7 +150,7 @@ export async function saveManagementApiToken(
 
 export async function loadAccount(): Promise<LMAccount | null> {
   try {
-    const raw = await SecureStore.getItemAsync(STORE_KEY);
+    const raw = await SecureStore.getItemAsync(STORE_KEY, SECURE_STORE_OPTIONS);
     if (!raw) return null;
     const account = JSON.parse(raw) as LMAccount;
     const migrated = withRelayUrl({

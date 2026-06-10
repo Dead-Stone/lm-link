@@ -63,6 +63,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [account, setAccountState] = useState<LMAccount | null>(null);
   const resettingRef = useRef(false);
+  const settingsRef = useRef(settings);
+
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
 
   useEffect(() => {
     (async () => {
@@ -81,7 +86,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (relayUrl && hubRelay && !isHubConnectionActive(s, acc)) {
           const patched = { ...s, ...getHubConnectionPatch(acc, s) };
           setSettings(patched);
-          saveSettings(patched);
+          settingsRef.current = patched;
+          try {
+            await saveSettings(patched);
+          } catch {
+            /* keep legacy storage until secure write succeeds */
+          }
         } else if (
           relayUrl &&
           hubRelay &&
@@ -90,15 +100,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ) {
           const patched = { ...s, apiKey: acc.token };
           setSettings(patched);
-          saveSettings(patched);
+          settingsRef.current = patched;
+          try {
+            await saveSettings(patched);
+          } catch {
+            /* keep legacy storage until secure write succeeds */
+          }
         } else if (relayUrl && !hubRelay) {
           const patched = { ...s, ...getHubConnectionPatch(acc, s) };
           setSettings(patched);
-          saveSettings(patched);
+          settingsRef.current = patched;
+          try {
+            await saveSettings(patched);
+          } catch {
+            /* keep legacy storage until secure write succeeds */
+          }
         } else if (acc.token && !s.apiKey) {
           const patched = { ...s, apiKey: acc.token };
           setSettings(patched);
-          saveSettings(patched);
+          settingsRef.current = patched;
+          try {
+            await saveSettings(patched);
+          } catch {
+            /* keep legacy storage until secure write succeeds */
+          }
         }
       }
       setIsLoading(false);
@@ -108,26 +133,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const setAccount = useCallback((a: LMAccount | null) => {
     setAccountState(a);
     if (a) {
-      setSettings((prev) => {
-        const next: Settings = {
-          ...prev,
-          ...getHubConnectionPatch(a, prev),
-        };
-        saveSettings(next);
-        return next;
+      const next: Settings = {
+        ...settingsRef.current,
+        ...getHubConnectionPatch(a, settingsRef.current),
+      };
+      setSettings(next);
+      settingsRef.current = next;
+      void saveSettings(next).catch(() => {
+        /* surfaced when user explicitly saves settings */
       });
     }
   }, []);
 
   const updateSettings = useCallback(async (partial: Partial<Settings>) => {
     if (resettingRef.current) return;
-    setSettings((prev) => {
-      const next = { ...prev, ...partial };
-      if (!resettingRef.current) {
-        void saveSettings(next);
-      }
-      return next;
-    });
+    const next = { ...settingsRef.current, ...partial };
+    setSettings(next);
+    settingsRef.current = next;
+    await saveSettings(next);
   }, []);
 
   const refreshConversations = useCallback(async () => {

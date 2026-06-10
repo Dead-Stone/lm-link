@@ -54,7 +54,7 @@ export interface ConnectionProfile {
   id: string;
   name: string;       // e.g. "Home", "Work", "Cloud"
   url: string;        // e.g. "http://192.168.1.10:1234/v1"
-  apiKey?: string;    // optional Bearer token for LM Studio Pro / cloud
+  apiKey?: string;    // in-memory only when saved via connection profile helpers
   isCloud?: boolean;  // true = LM Studio cloud endpoint
   createdAt: number;
 }
@@ -67,8 +67,8 @@ export interface Settings {
   temperature: number;
   maxTokens: number;
   theme: "dark" | "light";
-  apiKey?: string;              // active profile's API key (if any)
-  hfToken?: string;             // optional Hugging Face token (overrides EXPO_PUBLIC_HF_TOKEN)
+  apiKey?: string;              // in-memory only; persisted in SecureStore
+  hfToken?: string;             // in-memory only; persisted in SecureStore
   localServerUrl?: string;      // Mac LAN URL for model download/load (when using Hub for chat)
   /** Unload other models on Mac before loading a new one (default: true). */
   singleModelMode?: boolean;

@@ -1,135 +1,167 @@
 # LM Link for Android
 
-**A free, open-source mobile client for [LM Studio](https://lmstudio.ai)**
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Expo SDK 54](https://img.shields.io/badge/Expo-SDK%2054-000020?logo=expo)](https://expo.dev)
 
-LM Link connects your Android phone to LM Studio on your Mac or PC over Wi‑Fi, streams chat from your loaded models, and can run quantized GGUF models on-device via [llama.cpp](https://github.com/ggerganov/llama.cpp) (through [llama.rn](https://github.com/mybigday/llama.rn)).
+**LM Link** is a free, open-source Android client for [LM Studio](https://lmstudio.ai). Chat with models running on your Mac or PC over Wi‑Fi, or download and run quantized GGUF models on your phone with [llama.cpp](https://github.com/ggerganov/llama.cpp) via [llama.rn](https://github.com/mybigday/llama.rn).
 
-> **Disclaimer:** LM Link is an independent project and is not affiliated with, endorsed by, or sponsored by LM Studio or Element Labs Inc.
+> **Independent project** — LM Link is not affiliated with, endorsed by, or sponsored by LM Studio or Element Labs Inc.
+
+**[Report a bug](https://github.com/Dead-Stone/lm-link/issues/new)** · **[Request a feature](https://github.com/Dead-Stone/lm-link/issues/new)** · **[Contributing](CONTRIBUTING.md)** · **[Security](SECURITY.md)**
 
 ---
 
-## Features
+## Table of contents
 
-- **Streaming chat** — token-by-token replies with live speed and usage stats
-- **Model library** — browse, search, and download models for Mac/PC and on-device
-- **On-device inference** — run GGUF models locally (native build required)
-- **Vision attachments** — send photos to vision-capable remote models
-- **Network scan** — discover LM Studio on your local Wi‑Fi
-- **Conversation history** — chats stored on your device
-- **Saved connections** — store server URLs and optional API tokens
+- [What it does](#what-it-does)
+- [Screenshots](#screenshots)
+- [Using the app](#using-the-app)
+- [Development](#development)
+- [Repository layout](#repository-layout)
+- [Contributing & issues](#contributing--issues)
+- [Legal](#legal)
+- [License](#license)
+
+---
+
+## What it does
+
+| Mode | Description |
+|------|-------------|
+| **Remote** | Stream chat from LM Studio on your computer (same Wi‑Fi). Models load on the Mac/PC; your phone is the client. |
+| **On-device** | Download GGUF models in the Model Library and run them locally (requires a native build, not Expo Go). |
+
+**Highlights**
+
+- Streaming chat with live token speed and usage stats  
+- Unified model library — discover, search, and download for Mac/PC and phone  
+- Local network scan to find LM Studio on your LAN  
+- Vision attachments for capable remote models  
+- Conversation history stored on device  
+- Interactive setup guide and first-launch tutorial  
 
 ---
 
 ## Screenshots
 
-*Add Play Store / README screenshots before public launch.*
+*Screenshots coming soon — PRs welcome.*
 
 ---
 
-## Getting started
+## Using the app
+
+### Requirements
+
+- Android device  
+- [LM Studio](https://lmstudio.ai) 0.4+ on Mac, Windows, or Linux (for remote chat)  
+- Phone and computer on the same Wi‑Fi (for discovery and local inference)
+
+### Quick setup
+
+1. **On your computer** — Load a model in LM Studio → **Developer** → enable **Serve on Local Network** + **CORS** → **Start Server**. Note the URL (e.g. `http://192.168.1.5:1234/v1`).
+2. **On your phone** — **Settings → Connection** → scan the network or paste the URL → **Test** → **Save**.
+3. Open a chat and pick a model from the footer picker.
+
+The in-app **Setup Guide** and **tutorial** walk through each step with illustrations.
+
+### Download
+
+- **Play Store** — *coming soon*  
+- **Build from source** — see [Development](#development) below  
+
+---
+
+## Development
 
 ### Prerequisites
 
-- Node 18+
-- [LM Studio](https://lmstudio.ai) 0.4+ on a Mac, PC, or Linux machine (for remote chat)
-- Android device on the same Wi‑Fi network as your computer (for local discovery)
+- Node 18+  
+- Android Studio / SDK (for native builds and on-device models)  
+- [LM Studio](https://lmstudio.ai) (to test remote connections)
 
-### Install & run
+### Clone and run
 
 ```bash
 git clone https://github.com/Dead-Stone/lm-link.git
 cd lm-link
-npm install   # applies patches/ via postinstall (patch-package)
+npm install   # runs patch-package (patches/)
 npx expo start
 ```
 
-| Build | Command | Output |
-|-------|---------|--------|
-| Expo Go | Scan QR from `expo start` | Remote chat only — no on-device models |
-| Android (full) | `npm run android` or `npx expo run:android` | Required for on-device inference |
-| Preview APK (local) | `npm run build:apk:local` | `builds/lm-link-preview-v*.apk` |
-| Production AAB (local) | `npm run build:aab:local` | `builds/lm-link-production-v*.aab` |
-| Production AAB (cloud) | `npm run build:aab` | Download from [EAS dashboard](https://expo.dev) |
+| Goal | Command |
+|------|---------|
+| Quick UI test (remote chat only) | Expo Go — scan QR from `expo start` |
+| Full app + on-device models | `npm run android` |
+| Preview APK (local) | `npm run build:apk:local` → `builds/` |
+| Production AAB (local) | `npm run build:aab:local` → `builds/` |
+| Production AAB (EAS cloud) | `npm run build:aab` |
 
-### Connect to LM Studio
+Patches under [`patches/`](patches/) are applied automatically on `npm install`. See [CONTRIBUTING.md](CONTRIBUTING.md) for code style and PR workflow.
 
-**On your computer (LM Studio 0.4+):**
+### Tech stack
 
-1. Load a model in LM Studio.
-2. Open the **Developer** tab in the sidebar.
-3. Enable **Serve on Local Network** and **Allow network access from any device (CORS)**.
-4. Start the server (default port `1234`).
-5. Copy the network address, e.g. `http://192.168.1.5:1234/v1`.
-
-**On your phone (LM Link):**
-
-1. Open **Settings → Connection**.
-2. Tap **Scan local network** or paste the server URL manually.
-3. **Test Connection**, then **Save**.
-4. Start a chat and pick a model from the footer picker.
-
-The in-app **Setup Guide** (Settings) walks through each step with illustrations.
-
-**Troubleshooting:** phone and computer must be on the same Wi‑Fi; use the LAN IP (not `localhost`); allow LM Studio through the firewall if the test fails.
+Expo SDK 54 · React Native · expo-router · llama.rn · AsyncStorage · expo-secure-store · FlashList
 
 ---
 
-## Play Store release
+## Repository layout
 
-| Item | Value |
-|------|--------|
-| Package | `com.lmlink.android` |
+```
+lm-link/
+├── app/                 # Screens (expo-router) — chat, settings, onboarding, tutorial
+├── components/          # UI — model picker, library, chat, setup guide, tutorials
+├── lib/                 # App logic — API, storage, local models, connection, search
+├── assets/              # Icons, Lottie, brand images
+├── docs/                # Privacy policy, third-party notices
+├── patches/             # patch-package overrides for Expo tooling
+├── plugins/             # Expo config plugins (e.g. local network on Android)
+├── scripts/             # Build helpers, icon compose, llama.rn install
+├── app.config.ts        # Expo app config
+├── eas.json             # EAS Build profiles
+└── CONTRIBUTING.md      # How to contribute
+```
+
+**Good starting points in the codebase**
+
+| Area | Path |
+|------|------|
+| LM Studio API & network scan | [`lib/api.ts`](lib/api.ts) |
+| Chat streaming & messages | [`app/chat/[id].tsx`](app/chat/%5Bid%5D.tsx), [`lib/chat-request.ts`](lib/chat-request.ts) |
+| On-device models (GGUF) | [`lib/local-models.ts`](lib/local-models.ts) |
+| Model library UI | [`components/ModelLibraryModal.tsx`](components/ModelLibraryModal.tsx) |
+| Connection settings | [`app/settings.tsx`](app/settings.tsx), [`lib/connection-string.ts`](lib/connection-string.ts) |
+| Setup guide copy | [`lib/setup-guide.ts`](lib/setup-guide.ts) |
+
+---
+
+## Contributing & issues
+
+We welcome bug reports, feature ideas, and pull requests.
+
+1. **Search [existing issues](https://github.com/Dead-Stone/lm-link/issues)** first.  
+2. **Open a new issue** with steps to reproduce (bugs) or a clear description (features).  
+3. **Fork → branch → PR** — see [CONTRIBUTING.md](CONTRIBUTING.md). Run `npx tsc --noEmit` before submitting.
+
+**Security vulnerabilities** — please report privately; see [SECURITY.md](SECURITY.md). Do not open a public issue for undisclosed security problems.
+
+Maintainer: [Mohana Moganti](mailto:mohanmoganti2023@gmail.com)
+
+---
+
+## Legal
+
+| Document | Link |
+|----------|------|
 | Privacy policy | [docs/PRIVACY.md](docs/PRIVACY.md) |
 | Third-party notices | [docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md) |
-| Build | `npm run build:aab` or `npm run build:aab:local` |
-| Output | `builds/lm-link-production-v*.aab` (local) |
+| Security policy | [SECURITY.md](SECURITY.md) |
 
-Before submitting to [Google Play Console](https://play.google.com/console):
-
-1. Confirm `PRIVACY_POLICY_URL` in [`lib/legal.ts`](lib/legal.ts) matches your public repo URL.
-2. Host the repo (or mirror `docs/PRIVACY.md` on your site) so the privacy URL is reachable without login.
-3. Configure EAS credentials: `eas credentials` (production keystore).
-4. Upload the `.aab`, complete the Data safety form (local storage, network, optional camera/photos), and add store assets.
-
----
-
-## Legal & privacy
-
-| Document | Location |
-|----------|----------|
-| License (MIT) | [LICENSE](LICENSE) |
-| Privacy policy | [docs/PRIVACY.md](docs/PRIVACY.md) |
-| Third-party notices | [docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md) |
-| Security | [SECURITY.md](SECURITY.md) |
-
-In the app: **Settings → Privacy Policy** and **About → Open Source Licenses**.
-
----
-
-## Tech stack
-
-| Layer | Library |
-|-------|---------|
-| Framework | Expo SDK 54 / React Native |
-| Navigation | expo-router |
-| On-device inference | llama.rn → llama.cpp |
-| Storage | AsyncStorage, expo-secure-store, expo-file-system |
-| Lists | @shopify/flash-list |
-
----
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md). Bug reports and feature requests welcome via GitHub Issues.
-
----
-
-## Contact
-
-**Mohana Moganti** — [mohanmoganti2023@gmail.com](mailto:mohanmoganti2023@gmail.com)
+In the app: **About → Privacy Policy** and **Open Source Licenses**.
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Third-party components and downloaded model weights are subject to their own licenses — see [docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md).
+[MIT](LICENSE) — Copyright © 2025–2026 Mohana Moganti.
+
+Bundled libraries and downloaded model weights are subject to their own licenses — see [docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md).

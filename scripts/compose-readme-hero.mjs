@@ -7,6 +7,7 @@ import fs from "fs";
 import path from "path";
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
+import { createCanvas } from "canvas";
 import { JSDOM } from "jsdom";
 import sharp from "sharp";
 
@@ -123,6 +124,14 @@ function setupLottiePlayer(animationData) {
   global.window = lottieDom.window;
   global.document = lottieDom.window.document;
 
+  // lottie-web probes canvas support at load time (jsdom has no native 2d context).
+  lottieDom.window.HTMLCanvasElement.prototype.getContext = function (type) {
+    if (!this._nodeCanvas) {
+      this._nodeCanvas = createCanvas(this.width || HERO_SIZE, this.height || HERO_SIZE);
+    }
+    return this._nodeCanvas.getContext(type);
+  };
+
   const lottie = require("lottie-web");
 
   lottieContainer = lottieDom.window.document.getElementById("lottie");
@@ -201,8 +210,8 @@ for (let i = 0; i < HOLD_FRAMES; i++) {
   frames.push(finalFrame);
 }
 
-await sharp(frames, { animated: true })
-  .gif({ loop: 0, delay: FRAME_DELAY })
+await sharp(frames, { join: { animated: true } })
+  .gif({ loop: 0, delay: frames.map(() => FRAME_DELAY) })
   .toFile(path.join(OUT, "readme-hero.gif"));
 
 console.log(

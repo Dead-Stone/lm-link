@@ -54,6 +54,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.1.10",
+    "canvas": "^3.2.3",
     "jsdom": "^29.1.1",
     "lottie-web": "^5.13.0",
     "patch-package": "^8.0.0",

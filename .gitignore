@@ -1,0 +1,85 @@
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
+node_modules/
+package-lock.json
+
+# Expo
+.expo/
+dist/
+dist*/
+web-build/
+expo-env.d.ts
+
+# Native (regenerate with `npx expo prebuild`)
+/android
+/ios
+.kotlin/
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.log
+
+# macOS / Windows
+.DS_Store
+Thumbs.db
+
+# IDE & local AI tooling
+.idea/
+.vscode/
+.claude/
+.cursor/
+*.swp
+*.swo
+
+# secrets & signing
+.env
+.env*.local
+!.env.example
+*.pem
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# local env overrides (keep .env.example tracked)
+.env.local
+
+# GGUF model files
+*.gguf
+
+# TypeScript
+*.tsbuildinfo
+
+# EAS local state
+.eas/
+
+# Local build output (see builds/README.md)
+builds/*
+!builds/README.md
+
+# Stray artifacts outside builds/
+build-*.apk
+build-*.aab
+build-*.ipa
+*.apk
+*.aab
+*.ipa
+
+# temp / scratch
+.cleared-*/
+Task
+*.orig.*
+
+# Generated icon outputs (regenerate: npm run compose-brand-icons)
+# Source assets to keep tracked: lm-studio-logo.png, android-badge.png, icon.png, adaptive-icon.png, splash-icon.png, favicon.png
+assets/play-store-icon.png
+assets/lm-link-icon.png
+assets/brand-logo.png
+assets/android-robot-head-badge.png

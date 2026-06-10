@@ -1,0 +1,32 @@
+diff --git a/node_modules/@expo/ngrok/src/client.js b/node_modules/@expo/ngrok/src/client.js
+index 1111111..2222222 100644
+--- a/node_modules/@expo/ngrok/src/client.js
++++ b/node_modules/@expo/ngrok/src/client.js
+@@ -27,6 +27,13 @@ class NgrokClient {
+         return await this.internalApi[method](path, { json: options }).json();
+       }
+     } catch (error) {
++      if (!error.response) {
++        throw new NgrokClientError(
++          error.message || "ngrok request failed",
++          undefined,
++          { msg: error.message || "ngrok request failed" }
++        );
++      }
+       let clientError;
+       try {
+         const response = JSON.parse(error.response.body);
+@@ -51,6 +58,13 @@ class NgrokClient {
+         (response) => response.statusCode === 204
+       );
+     } catch (error) {
++      if (!error.response) {
++        throw new NgrokClientError(
++          error.message || "ngrok request failed",
++          undefined,
++          { msg: error.message || "ngrok request failed" }
++        );
++      }
+       const response = JSON.parse(error.response.body);
+       throw new NgrokClientError(response.msg, error.response, response);
+     }

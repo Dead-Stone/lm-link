@@ -1,0 +1,19 @@
+diff --git a/node_modules/@expo/cli/build/src/start/server/AsyncNgrok.js b/node_modules/@expo/cli/build/src/start/server/AsyncNgrok.js
+index 1111111..2222222 100644
+--- a/node_modules/@expo/cli/build/src/start/server/AsyncNgrok.js
++++ b/node_modules/@expo/cli/build/src/start/server/AsyncNgrok.js
+@@ -201,10 +201,12 @@ class AsyncNgrok {
+             // Global config path.
+             const configPath = _path().join((0, _UserSettings.getSettingsDirectory)(), 'ngrok.yml');
+             debug('Global config path:', configPath);
+-            const urlProps = await this._getConnectionPropsAsync();
++            const customAuthtoken = process.env.NGROK_AUTHTOKEN;
++            const authtoken = customAuthtoken || NGROK_CONFIG.authToken;
++            const urlProps = customAuthtoken ? {} : await this._getConnectionPropsAsync();
+             const url = await instance.connect({
+                 ...urlProps,
+-                authtoken: NGROK_CONFIG.authToken,
++                authtoken,
+                 configPath,
+                 onStatusChange (status) {
+                     if (status === 'closed') {

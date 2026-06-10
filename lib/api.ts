@@ -10,9 +10,11 @@ import {
   isSystemRoleUnsupportedError,
   modelSupportsSystemRole,
 } from "./chat-request";
-import { isSameModelId } from "./model-id";
+import { isSameModelId, resolveCanonicalModelId } from "./model-id";
 import { resolveRemoteDownloadModelString } from "./model-download-string";
+import { LibraryDownloadSource } from "./remote-model-library";
 import {
+  formatLmStudioLoadError,
   formatLmStudioRuntimeDownloadError,
   isLmStudioMacDownloadModel,
   lmStudioMacDownloadBlockedMessage,
@@ -497,6 +499,7 @@ export type LmStudioSearchResult = {
   id: string;
   name: string;
   staffPick?: boolean;
+  downloads?: number;
 };
 
 export type LmStudioModelSearchOptions = {
@@ -534,14 +537,44 @@ function readSearchIdentifier(raw: Record<string, unknown>): string {
   return typeof fallback === "string" ? fallback.trim() : "";
 }
 
+function readHubDownloadCount(raw: Record<string, unknown>): number | undefined {
+  const candidates: unknown[] = [
+    raw.downloadCount,
+    raw.download_count,
+    raw.downloads,
+  ];
+  const stats = raw.stats;
+  if (stats && typeof stats === "object" && !Array.isArray(stats)) {
+    candidates.push((stats as Record<string, unknown>).downloads);
+  }
+  const aggregates = raw.aggregates;
+  if (aggregates && typeof aggregates === "object" && !Array.isArray(aggregates)) {
+    const allTime = (aggregates as Record<string, unknown>).allTime;
+    if (allTime && typeof allTime === "object" && !Array.isArray(allTime)) {
+      candidates.push((allTime as Record<string, unknown>).total);
+    }
+  }
+  const current = raw.current;
+  if (current && typeof current === "object" && !Array.isArray(current)) {
+    candidates.push((current as Record<string, unknown>).downloadCount);
+  }
+
+  for (const value of candidates) {
+    if (typeof value === "number" && value > 0) return value;
+  }
+  return undefined;
+}
+
 function mapSearchResult(raw: Record<string, unknown>): LmStudioSearchResult | null {
   const id = readSearchIdentifier(raw);
   if (!id) return null;
   const name = typeof raw.name === "string" ? raw.name.trim() : id;
+  const downloads = readHubDownloadCount(raw);
   return {
     id,
     name,
     staffPick: raw.staffPick === true || raw.staff_pick === true,
+    ...(downloads != null ? { downloads } : {}),
   };
 }
 
@@ -634,9 +667,12 @@ export async function searchLmStudioModels(
 export async function downloadLmStudioModel(
   baseUrl: string,
   modelId: string,
-  apiKey?: string
+  apiKey?: string,
+  options?: { downloadSource?: LibraryDownloadSource }
 ): Promise<ModelDownloadJob> {
-  const resolvedModel = resolveRemoteDownloadModelString(modelId);
+  const resolvedModel = resolveRemoteDownloadModelString(modelId, {
+    downloadSource: options?.downloadSource,
+  });
   if (!isLmStudioMacDownloadModel(modelId) && !isLmStudioMacDownloadModel(resolvedModel)) {
     throw new Error(lmStudioMacDownloadBlockedMessage(modelId || resolvedModel));
   }
@@ -712,6 +748,15 @@ export function formatLoadError(error: unknown, settings: Pick<Settings, "baseUr
   if (/network request failed|failed to connect/i.test(message)) {
     return "Can't reach your Mac — confirm LM Studio's server is running on your network.";
   }
+  const loadDetail = message.match(/^Load failed \((\d+)\):\s*(.*)$/is);
+  const runtimeMessage = formatLmStudioLoadError(
+    loadDetail?.[2] ?? message,
+    undefined,
+    loadDetail ? Number(loadDetail[1]) : undefined
+  );
+  if (runtimeMessage) return runtimeMessage;
+  const genericRuntime = formatLmStudioLoadError(message);
+  if (genericRuntime) return genericRuntime;
   return message;
 }
 
@@ -739,11 +784,21 @@ export async function loadLmStudioModel(
   });
   if (!res.ok) {
     const detail = await readApiError(res);
-    throw new Error(`Load failed (${res.status}): ${detail}`);
+    const friendly =
+      formatLmStudioLoadError(detail, modelId, res.status) ??
+      `Load failed (${res.status}): ${detail}`;
+    throw new Error(friendly);
   }
   const result = parseLoadResult(await res.json());
-  if (result.error) throw new Error(result.error);
+  if (result.error) {
+    throw new Error(formatLmStudioLoadError(result.error, modelId) ?? result.error);
+  }
   return result;
+}
+
+/** True when the model is fully loaded in memory (not merely loading). */
+export function isModelInMemory(model: Pick<LMModel, "state">): boolean {
+  return model.state?.trim().toLowerCase() === "loaded";
 }
 
 export function isRemoteModelLoaded(model: Pick<LMModel, "state">): boolean {
@@ -751,11 +806,20 @@ export function isRemoteModelLoaded(model: Pick<LMModel, "state">): boolean {
 }
 
 type PartitionLibraryOptions = {
-  /** Conversation / picker selection — canonical id for loaded section. */
+  /** Enrich the loaded row that matches this id (metadata only — never fake-loaded). */
   activeModelId?: string | null;
-  /** Choose-model picker: show the active chat model under Loaded when it matches the list. */
-  preferActiveInLoaded?: boolean;
+  /** When true (default), at most one Mac/PC model appears under Loaded. */
+  singleModelMode?: boolean;
 };
+
+function enrichLoadedRow(activeRow: LMModel, loadedRow: LMModel): LMModel {
+  return {
+    ...activeRow,
+    ...loadedRow,
+    id: loadedRow.id,
+    state: loadedRow.state ?? "loaded",
+  };
+}
 
 /** Split catalog rows into memory-loaded vs installed-only (no duplicate identities). */
 export function partitionLibraryModels(
@@ -766,28 +830,25 @@ export function partitionLibraryModels(
   installed: LMModel[];
 } {
   const unique = dedupeModels(models);
-  let loaded = unique.filter(isRemoteModelLoaded);
   const activeModelId = options?.activeModelId?.trim();
+  const singleModelMode = options?.singleModelMode !== false;
+  const activeRow = activeModelId
+    ? unique.find((model) => isSameModelId(model.id, activeModelId))
+    : undefined;
 
-  if (activeModelId) {
-    const activeRow = unique.find((model) => isSameModelId(model.id, activeModelId));
-    const activeInLoaded = loaded.some((model) => isSameModelId(model.id, activeModelId));
+  let loaded = unique.filter(isModelInMemory);
 
-    if (activeRow && !activeInLoaded) {
-      const relatedLoaded = loaded.find((model) => isSameModelId(model.id, activeRow.id));
-      if (relatedLoaded) {
-        loaded = [
-          ...loaded.filter((model) => !isSameModelId(model.id, relatedLoaded.id)),
-          { ...activeRow, state: relatedLoaded.state ?? "loaded" },
-        ];
-      } else if (options?.preferActiveInLoaded) {
-        loaded = [...loaded, { ...activeRow, state: "loaded" }];
-      }
-    } else if (activeRow && activeInLoaded) {
-      loaded = loaded.map((model) =>
-        isSameModelId(model.id, activeRow.id) ? { ...activeRow, state: model.state ?? "loaded" } : model
-      );
-    }
+  if (activeRow) {
+    loaded = loaded.map((model) =>
+      isSameModelId(model.id, activeRow.id) ? enrichLoadedRow(activeRow, model) : model
+    );
+  }
+
+  if (singleModelMode && loaded.length > 1) {
+    const preferred =
+      (activeModelId && loaded.find((model) => isSameModelId(model.id, activeModelId))) ??
+      loaded[0];
+    loaded = preferred ? [preferred] : [];
   }
 
   const installed = unique.filter(
@@ -970,34 +1031,41 @@ export async function loadRemoteModelOnSystem(
     : null;
   const mgmtKey = resolveManagementApiKey(settings, accountRef);
 
+  let installed: LMModel[] = [];
+  try {
+    installed = await fetchModels(controlUrl, mgmtKey);
+  } catch {
+    // Load may still work with the raw id.
+  }
+
+  const targetId =
+    installed.length > 0 ? resolveCanonicalModelId(installed, modelId) : modelId.trim();
+
   if (singleMode) {
-    await unloadLoadedRemoteModels(settings, modelId, options?.accountToken);
-    const previous = options?.previousModelId;
-    if (previous && !isSameModelId(previous, modelId)) {
+    await unloadLoadedRemoteModels(settings, targetId, options?.accountToken);
+    const previous = options?.previousModelId?.trim();
+    if (previous && !isSameModelId(previous, targetId)) {
+      const previousId =
+        installed.length > 0 ? resolveCanonicalModelId(installed, previous) : previous;
       try {
-        await unloadLmStudioModel(controlUrl, previous, mgmtKey);
+        await unloadLmStudioModel(controlUrl, previousId, mgmtKey);
       } catch {
         // Already unloaded via unloadLoadedRemoteModels
       }
     }
   }
 
-  try {
-    const installed = await fetchModels(controlUrl, mgmtKey);
-    const alreadyLoaded = installed.some(
-      (m) => isSameModelId(m.id, modelId) && isLoadedModelState(m.state)
-    );
-    if (alreadyLoaded) {
-      onProgress?.(1);
-      return { status: "loaded", instance_id: modelId };
-    }
-  } catch {
-    // Proceed to load if status check fails
+  const alreadyLoaded = installed.some(
+    (m) => isSameModelId(m.id, targetId) && isLoadedModelState(m.state)
+  );
+  if (alreadyLoaded) {
+    onProgress?.(1);
+    return { status: "loaded", instance_id: targetId };
   }
 
   const stopProgress = onProgress ? runSimulatedProgress(onProgress) : undefined;
   try {
-    return await loadLmStudioModel(controlUrl, modelId, mgmtKey);
+    return await loadLmStudioModel(controlUrl, targetId, mgmtKey);
   } finally {
     stopProgress?.();
   }

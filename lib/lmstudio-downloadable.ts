@@ -1,3 +1,8 @@
+import {
+  modelHaystackLooksVisionCapable,
+  modelIdLooksVisionCapable,
+} from "./vision-models";
+
 /** Models LM Studio can download and run as chat LLMs on Mac/PC (not video/diffusion/embeddings). */
 
 const NON_CHAT_MODEL_ID_PATTERNS: RegExp[] = [
@@ -31,7 +36,13 @@ const CHAT_PIPELINE_TAGS = new Set([
   "text2text-generation",
   "conversational",
   "question-answering",
+  "image-text-to-text",
+  "visual-question-answering",
+  "image-to-text",
 ]);
+
+const VLM_GGUF_ARCHITECTURE_PATTERN =
+  /llava|vl|vision|idefics|moondream|paligemma|internvl|cogvlm|fuyu|mllama|gemma3n|qwen2_vl|qwen3_vl|smolvlm/i;
 
 const LM_STUDIO_GGUF_LLM_ARCHITECTURES = [
   "llama",
@@ -87,7 +98,7 @@ export function hfMetadataLooksNonChatLmStudioModel(options: {
   const arch = (options.ggufArchitecture ?? "").trim().toLowerCase();
   if (arch) {
     const isChatArch = LM_STUDIO_GGUF_LLM_ARCHITECTURES.some((token) => arch.includes(token));
-    if (!isChatArch) return true;
+    if (!isChatArch && !VLM_GGUF_ARCHITECTURE_PATTERN.test(arch)) return true;
   }
 
   for (const tag of options.tags ?? []) {
@@ -100,6 +111,23 @@ export function hfMetadataLooksNonChatLmStudioModel(options: {
   return false;
 }
 
+function hfMetadataLooksGenerativeMediaOnly(options: {
+  pipelineTag?: string | null;
+  tags?: string[] | null;
+}): boolean {
+  const pipelineTag = (options.pipelineTag ?? "").trim().toLowerCase();
+  if (/text-to-image|text-to-video|image-to-video|stable-diffusion|diffusion/.test(pipelineTag)) {
+    return true;
+  }
+  for (const tag of options.tags ?? []) {
+    const lower = tag.toLowerCase();
+    if (/text-to-video|image-to-video|text-to-image|diffusers-only|comfyui/i.test(lower)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function isLmStudioMacDownloadModel(
   modelId: string,
   hfMeta?: {
@@ -109,6 +137,14 @@ export function isLmStudioMacDownloadModel(
   }
 ): boolean {
   if (modelIdLooksNonChatLmStudioModel(modelId)) return false;
+
+  const visionCapable =
+    modelIdLooksVisionCapable(modelId) || modelHaystackLooksVisionCapable(modelId);
+  if (visionCapable) {
+    if (hfMeta && hfMetadataLooksGenerativeMediaOnly(hfMeta)) return false;
+    return true;
+  }
+
   if (hfMeta && hfMetadataLooksNonChatLmStudioModel(hfMeta)) return false;
   return true;
 }
@@ -133,6 +169,56 @@ export function lmStudioMacDownloadBlockedMessage(modelId: string): string {
     "LM Studio only downloads chat LLMs for Mac/PC — not video, image, or embedding models. " +
     "Try a catalog model like qwen/qwen3-4b-2507."
   );
+}
+
+function modelIdLooksGemma4(modelId?: string): boolean {
+  if (!modelId?.trim()) return false;
+  return /gemma[-_]?4|gemma4/i.test(modelId);
+}
+
+/** Friendlier copy when LM Studio rejects a load (runtime too old, unsupported arch, etc.). */
+export function formatLmStudioLoadError(
+  message: string,
+  modelId?: string,
+  status?: number
+): string | null {
+  const lower = message.toLowerCase();
+  const hay = `${lower} ${modelId?.toLowerCase() ?? ""}`;
+
+  const gemma4RuntimeIssue =
+    /unknown model architecture.*gemma4|gemma4.*unknown|architecture.*['"]?gemma4/.test(lower) ||
+    (/unknown model architecture|unsupported architecture|failed to load model/.test(lower) &&
+      /gemma4|gemma-4|gemma_4/.test(hay));
+
+  if (
+    gemma4RuntimeIssue ||
+    (modelIdLooksGemma4(modelId) &&
+      (status === 500 ||
+        /unknown model architecture|unsupported architecture|no lm runtime|failed to load/i.test(
+          lower
+        )))
+  ) {
+    return (
+      "Gemma 4 needs a newer LM Studio runtime on your Mac. Open LM Studio → Settings → Runtime, " +
+      "update llama.cpp (or MLX on Apple Silicon), restart LM Studio, then load the model again."
+    );
+  }
+
+  const runtimeDownload = formatLmStudioRuntimeDownloadError(message, modelId);
+  if (runtimeDownload) return runtimeDownload;
+
+  if (
+    modelIdLooksGemma4(modelId) &&
+    status === 500 &&
+    (!message.trim() || /internal server error/i.test(message))
+  ) {
+    return (
+      "LM Studio returned a server error loading Gemma 4 — usually an outdated runtime. " +
+      "Update llama.cpp or MLX under Settings → Runtime on your Mac, restart LM Studio, and try again."
+    );
+  }
+
+  return null;
 }
 
 export function formatLmStudioRuntimeDownloadError(

@@ -18,6 +18,7 @@ const SYSTEM_ROLE_SUPPORTED_HINTS: RegExp[] = [
   /qwen/i,
   /gemma[-_]?2/i,
   /gemma[-_]?3/i,
+  /gemma[-_]?4/i,
   /deepseek/i,
   /nemotron/i,
   /mistral[-_]large/i,

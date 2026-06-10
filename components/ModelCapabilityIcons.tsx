@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useMemo } from "react";
-import { StyleSheet, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
+import { ModelModality } from "../lib/vision-models";
 import { ThemeColors, useTheme } from "../lib/theme";
 
 /** Unsupported thinking/vision — light grey in light mode, dim in dark mode. */
@@ -11,12 +12,19 @@ function capabilityColors(
   isDark: boolean,
   highlighted: boolean,
   thinking: boolean,
-  vision: boolean
-): { thinking: string; vision: string } {
+  vision: boolean,
+  video: boolean
+): {
+  text: string;
+  thinking: string;
+  vision: string;
+  video: string;
+} {
   const inactive = isDark ? colors.textDim : CAPABILITY_INACTIVE_LIGHT;
 
   if (isDark) {
     return {
+      text: highlighted ? colors.primaryLight : inactive,
       thinking: thinking
         ? highlighted
           ? "#fde68a"
@@ -27,10 +35,16 @@ function capabilityColors(
           ? "#93c5fd"
           : "#60a5fa"
         : inactive,
+      video: video
+        ? highlighted
+          ? "#fcd34d"
+          : "#f59e0b"
+        : inactive,
     };
   }
 
   return {
+    text: highlighted ? colors.textMuted : inactive,
     thinking: thinking
       ? highlighted
         ? "#b45309"
@@ -41,51 +55,83 @@ function capabilityColors(
         ? "#1d4ed8"
         : "#2563eb"
       : inactive,
+    video: video
+      ? highlighted
+        ? "#b45309"
+        : "#d97706"
+      : inactive,
   };
 }
 
 export function ModelCapabilityIcons({
+  modalities = ["text"],
   thinking = false,
-  vision = false,
   colors,
   size = 14,
   highlighted = false,
-  /** Chat footer — show both icons; unsupported ones stay grey. Lists omit this. */
+  /** Chat footer — show all capability icons; unsupported ones stay grey. */
   showUnsupported = false,
 }: {
+  modalities?: ModelModality[];
   thinking?: boolean;
-  vision?: boolean;
   colors: ThemeColors;
   size?: number;
   highlighted?: boolean;
   showUnsupported?: boolean;
 }) {
   const { isDark } = useTheme();
+  const hasText = modalities.includes("text");
+  const hasVision = modalities.includes("image");
+  const hasVideo = modalities.includes("video");
+
   const palette = useMemo(
-    () => capabilityColors(colors, isDark, highlighted, thinking, vision),
-    [colors, isDark, highlighted, thinking, vision]
+    () => capabilityColors(colors, isDark, highlighted, thinking, hasVision, hasVideo),
+    [colors, isDark, highlighted, thinking, hasVision, hasVideo]
   );
 
-  if (!showUnsupported && !thinking && !vision) {
+  if (!showUnsupported && !thinking && !hasVision && !hasVideo && !hasText) {
     return null;
   }
 
+  const glyphSize = Math.max(10, size - 2);
+
   return (
     <View style={styles.row}>
+      {(showUnsupported || hasText) && (
+        <Text
+          style={{
+            color: palette.text,
+            fontSize: glyphSize,
+            fontWeight: "700",
+            lineHeight: glyphSize + 2,
+          }}
+          accessibilityLabel="Text model"
+        >
+          Aa
+        </Text>
+      )}
+      {(showUnsupported || hasVision) && (
+        <Ionicons
+          name="image-outline"
+          size={size}
+          color={palette.vision}
+          accessibilityLabel={hasVision ? "Vision model" : "No vision"}
+        />
+      )}
+      {(showUnsupported || hasVideo) && (
+        <Ionicons
+          name="videocam-outline"
+          size={size}
+          color={palette.video}
+          accessibilityLabel={hasVideo ? "Video model" : "No video"}
+        />
+      )}
       {(showUnsupported || thinking) && (
         <Ionicons
           name="bulb-outline"
           size={size}
           color={palette.thinking}
           accessibilityLabel={thinking ? "Thinking model" : "Not a thinking model"}
-        />
-      )}
-      {(showUnsupported || vision) && (
-        <Ionicons
-          name="image-outline"
-          size={size}
-          color={palette.vision}
-          accessibilityLabel={vision ? "Vision model" : "Text only"}
         />
       )}
     </View>

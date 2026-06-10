@@ -11,6 +11,7 @@ import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useState } from "react";
 import AppOpeningAnimation from "../components/AppOpeningAnimation";
+import FirstLaunchTutorial from "../components/FirstLaunchTutorial";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AppProvider } from "../lib/context";
@@ -42,32 +43,12 @@ function RootNavigator() {
         }}
       />
       <Stack.Screen
-        name="settings"
-        options={{
-          presentation: "transparentModal",
-          animation: "slide_from_right",
-          gestureEnabled: false,
-          contentStyle: { backgroundColor: "transparent" },
-          freezeOnBlur: true,
-        }}
-      />
-      <Stack.Screen
         name="about"
         options={{
           presentation: "transparentModal",
           animation: "slide_from_right",
           gestureDirection: "horizontal",
           fullScreenGestureEnabled: true,
-          contentStyle: { backgroundColor: "transparent" },
-          freezeOnBlur: true,
-        }}
-      />
-      <Stack.Screen
-        name="conversations"
-        options={{
-          presentation: "transparentModal",
-          animation: "slide_from_left",
-          gestureEnabled: false,
           contentStyle: { backgroundColor: "transparent" },
           freezeOnBlur: true,
         }}
@@ -97,6 +78,8 @@ function AppShell() {
   const { colors } = useTheme();
   const [openingDone, setOpeningDone] = useState(false);
   const [openingGateReady, setOpeningGateReady] = useState(false);
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
+  const [tutorialDismissed, setTutorialDismissed] = useState(false);
   const [fontsLoaded] = useFonts({
     PlusJakartaSans_600SemiBold,
     PlusJakartaSans_700Bold,
@@ -115,12 +98,12 @@ function AppShell() {
   useEffect(() => {
     if (!fontsLoaded) return;
     void isOnboardingDone().then((done) => {
-      if (!done) {
-        setOpeningDone(true);
-      }
+      setNeedsOnboarding(!done);
       setOpeningGateReady(true);
     });
   }, [fontsLoaded]);
+
+  const showTutorial = needsOnboarding && openingDone && !tutorialDismissed;
 
   if (!fontsLoaded || !openingGateReady) {
     return null;
@@ -132,6 +115,13 @@ function AppShell() {
       <RootNavigator />
       {!openingDone ? (
         <AppOpeningAnimation onFinish={() => setOpeningDone(true)} />
+      ) : null}
+      {showTutorial ? (
+        <FirstLaunchTutorial
+          mode="onboarding"
+          presentation="glass"
+          onComplete={() => setTutorialDismissed(true)}
+        />
       ) : null}
     </GestureHandlerRootView>
   );

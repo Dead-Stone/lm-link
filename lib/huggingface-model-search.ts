@@ -1,47 +1,67 @@
-import { isPlausibleCatalogModelId } from "./lmstudio-catalog";
+import { isPlausibleCatalogModelId } from "./catalog-model-id";
+import {
+  huggingFaceApiFetch,
+  huggingFaceApiFetchUrl,
+  parseHuggingFaceLinkNextUrl,
+  type HuggingFaceAuthOptions,
+} from "./huggingface-api";
+import { LIBRARY_PAGE_SIZE } from "./library-pagination";
+import {
+  buildHfDescription,
+  fetchHuggingFaceModelEntry,
+  getCachedHfLibraryDownloadCount,
+  getCachedHfLibrarySizeLabel,
+  huggingFaceRepoIdFromString,
+  type HuggingFaceModel,
+} from "./huggingface-model-card";
 import {
   formatLmStudioRuntimeDownloadError,
   isLmStudioMacDownloadModel,
   lmStudioMacDownloadBlockedMessage,
 } from "./lmstudio-downloadable";
-import { extractModelParamLabel, parseModelName } from "./model-name";
-import { resolveFileSizeLabel } from "./model-size";
+import { sortRemoteLibraryEntriesByPopularity } from "./library-entry-downloads";
+import { libraryRemoteEntryDetailScore } from "./library-entry-rank";
 import { librarySearchApiTerm, matchesLibrarySearch, parseLibrarySearchQuery } from "./library-search";
+import { normalizeModelKey } from "./model-id";
+import { extractModelParamLabel, parseModelName } from "./model-name";
 import { resolveRemoteDownloadModelString } from "./model-download-string";
+import { estimateDownloadSizeFromParams, resolveFileSizeLabel } from "./model-size";
 import {
   findCuratedRemoteLibraryEntry,
   isModelInstalled,
-  normalizeModelKey,
   RemoteLibraryEntry,
 } from "./remote-model-library";
-import { modelMatchesModalityFilter, ModelModalityFilter } from "./vision-models";
+import {
+  capabilityCatalogSearchTerms,
+  isCapabilityCatalogSearchQuery,
+  ModelCapabilityFilter,
+  modelHaystackLooksVisionCapable,
+  modelIdLooksVisionCapable,
+  modelMatchesCapabilityFilter,
+  modelMatchesModalityFilter,
+  ModelModalityFilter,
+  remoteLibraryEntryHaystack,
+} from "./vision-models";
 
-const HF_API = "https://huggingface.co/api/models";
-const HF_SEARCH_LIMIT = 24;
-const HF_BADGE_COLOR = "#FFD21E";
+export {
+  fetchHuggingFaceModelEntry,
+  getCachedHfLibraryDownloadCount,
+  getCachedHfLibrarySizeLabel,
+  huggingFaceRepoIdFromString,
+} from "./huggingface-model-card";
 
-type HuggingFaceModel = {
-  id?: string;
-  modelId?: string;
-  author?: string;
-  downloads?: number;
-  likes?: number;
-  pipeline_tag?: string;
-  tags?: string[];
-  library?: string[];
-  cardData?: {
-    base_model?: string;
-    license?: string;
-    language?: string[];
-  };
-  gguf?: {
-    total?: number;
-    architecture?: string;
-    context_length?: number;
-  };
+const HF_SEARCH_LIMIT = LIBRARY_PAGE_SIZE;
+
+export type HuggingFaceModelListPage = {
+  models: HuggingFaceModel[];
+  nextUrl: string | null;
 };
 
-const hfEntryCache = new Map<string, RemoteLibraryEntry>();
+export type HuggingFaceModelSearchPage = {
+  entries: RemoteLibraryEntry[];
+  nextUrl: string | null;
+};
+const HF_BADGE_COLOR = "#FFD21E";
 
 function publisherFromModelId(modelId: string): string {
   const org = modelId.split("/")[0] ?? "";
@@ -49,90 +69,23 @@ function publisherFromModelId(modelId: string): string {
   return org.charAt(0).toUpperCase() + org.slice(1);
 }
 
-function formatDownloadCount(count: number): string {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
-  if (count >= 1_000) return `${(count / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
-  return String(count);
-}
-
-/** Extract `org/model` repo id from a download string, URL, or model id. */
-export function huggingFaceRepoIdFromString(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-
-  if (isPlausibleCatalogModelId(trimmed)) return trimmed;
-
-  try {
-    const resolved = resolveRemoteDownloadModelString(trimmed);
-    if (isPlausibleCatalogModelId(resolved)) return resolved;
-
-    if (/^https?:\/\//i.test(resolved)) {
-      const path = resolved
-        .replace(/^https?:\/\/[^/]+\//i, "")
-        .replace(/\/+$/, "")
-        .split("/")
-        .filter(Boolean);
-      if (path.length >= 2) {
-        const repoId = `${path[0]}/${path[1]}`;
-        if (isPlausibleCatalogModelId(repoId)) return repoId;
-      }
-    }
-  } catch {
-    /* fall through */
+function mergeRemoteLibraryDownloads(
+  base: RemoteLibraryEntry,
+  details: RemoteLibraryEntry
+): Pick<RemoteLibraryEntry, "downloads" | "downloadSource"> {
+  if (base.downloadSource === "lmstudio" && typeof base.downloads === "number" && base.downloads > 0) {
+    return { downloads: base.downloads, downloadSource: "lmstudio" };
   }
-
-  return null;
-}
-
-function buildHfDescription(model: HuggingFaceModel): string {
-  const parts: string[] = [];
-  if (model.cardData?.base_model) {
-    parts.push(`Quantized from ${model.cardData.base_model}`);
+  if (details.downloadSource === "lmstudio" && typeof details.downloads === "number" && details.downloads > 0) {
+    return { downloads: details.downloads, downloadSource: "lmstudio" };
   }
-  if (model.pipeline_tag) {
-    parts.push(model.pipeline_tag.replace(/-/g, " "));
+  if (typeof base.downloads === "number" && base.downloads > 0) {
+    return { downloads: base.downloads, downloadSource: base.downloadSource ?? details.downloadSource };
   }
-  if (model.gguf?.architecture) {
-    parts.push(`${model.gguf.architecture} architecture`);
+  if (typeof details.downloads === "number" && details.downloads > 0) {
+    return { downloads: details.downloads, downloadSource: details.downloadSource ?? base.downloadSource };
   }
-  if (model.gguf?.context_length) {
-    const ctx = model.gguf.context_length;
-    parts.push(ctx >= 1024 ? `${Math.round(ctx / 1024)}k context` : `${ctx} token context`);
-  }
-  if (model.tags?.length) {
-    const tags = model.tags
-      .filter((tag) => !tag.startsWith("arxiv:") && !tag.startsWith("license:"))
-      .slice(0, 3)
-      .join(", ");
-    if (tags) parts.push(tags);
-  }
-  if (typeof model.downloads === "number" && model.downloads > 0) {
-    parts.push(`${formatDownloadCount(model.downloads)} downloads on Hugging Face`);
-  }
-  return parts.length > 0 ? parts.join(" · ") : "Model on Hugging Face";
-}
-
-function huggingFaceDetailsToEntry(model: HuggingFaceModel, repoId: string): RemoteLibraryEntry {
-  const slash = repoId.indexOf("/");
-  const slug = repoId.slice(slash + 1);
-  const params = extractModelParamLabel(repoId, slug);
-  const { displayName } = parseModelName(repoId);
-  const ggufBytes = model.gguf?.total;
-  const sizeLabel =
-    ggufBytes && ggufBytes > 0
-      ? resolveFileSizeLabel(ggufBytes) ?? undefined
-      : undefined;
-
-  return {
-    id: repoId,
-    name: displayName || slug,
-    publisher: publisherFromModelId(repoId),
-    params: params ?? undefined,
-    sizeLabel,
-    badge: "HF",
-    badgeColor: HF_BADGE_COLOR,
-    description: buildHfDescription(model),
-  };
+  return {};
 }
 
 function mergeRemoteLibraryEntries(
@@ -148,44 +101,102 @@ function mergeRemoteLibraryEntries(
     description: details.description || base.description,
     badge: base.badge === "Direct" || !base.badge ? details.badge : base.badge,
     badgeColor: base.badgeColor || details.badgeColor,
+    ...mergeRemoteLibraryDownloads(base, details),
   };
 }
 
-/** Fetch Hugging Face model card details for a repo id or download string. */
-export async function fetchHuggingFaceModelEntry(
-  modelString: string
-): Promise<RemoteLibraryEntry | null> {
-  const repoId = huggingFaceRepoIdFromString(modelString);
-  if (!repoId) return null;
+function hasExplicitRemoteLibrarySize(
+  entry: Pick<RemoteLibraryEntry, "id" | "name" | "sizeLabel" | "description">
+): boolean {
+  const curated = findCuratedRemoteLibraryEntry(entry.id);
+  return !!resolveFileSizeLabel(
+    entry.sizeLabel,
+    curated?.sizeLabel,
+    entry.id,
+    entry.name,
+    entry.description
+  );
+}
 
-  const cacheKey = normalizeModelKey(repoId);
-  const cached = hfEntryCache.get(cacheKey);
-  if (cached) return cached;
+/** Sync size: known labels, HF cache, then param estimate. */
+export function resolveRemoteLibrarySizeLabelWithHfCache(
+  entry: Pick<RemoteLibraryEntry, "id" | "name" | "sizeLabel" | "params" | "description">
+): string | null {
+  if (hasExplicitRemoteLibrarySize(entry)) {
+    const curated = findCuratedRemoteLibraryEntry(entry.id);
+    return resolveFileSizeLabel(
+      entry.sizeLabel,
+      curated?.sizeLabel,
+      entry.id,
+      entry.name,
+      entry.description
+    );
+  }
 
-  const slash = repoId.indexOf("/");
-  const org = repoId.slice(0, slash);
-  const model = repoId.slice(slash + 1);
-  const url = `${HF_API}/${encodeURIComponent(org)}/${encodeURIComponent(model)}`;
+  const cachedHf = getCachedHfLibrarySizeLabel(entry.id);
+  if (cachedHf) return cachedHf;
 
-  const response = await fetch(url);
-  if (!response.ok) return null;
+  const curated = findCuratedRemoteLibraryEntry(entry.id);
+  const param =
+    entry.params ??
+    curated?.params ??
+    extractModelParamLabel(entry.id, entry.name, entry.params) ??
+    null;
+  if (!param) return null;
 
-  const data = (await response.json()) as HuggingFaceModel;
-  const entry = huggingFaceDetailsToEntry(data, repoId);
-  hfEntryCache.set(cacheKey, entry);
-  return entry;
+  const estimate = estimateDownloadSizeFromParams(param);
+  return estimate ? estimate.replace(/^~\s*/, "") : null;
+}
+
+function needsHfSizePrefetch(
+  entry: Pick<RemoteLibraryEntry, "id" | "name" | "sizeLabel" | "params" | "description">
+): boolean {
+  if (!huggingFaceRepoIdFromString(entry.id)) return false;
+  if (hasExplicitRemoteLibrarySize(entry)) return false;
+  return !getCachedHfLibrarySizeLabel(entry.id);
+}
+
+/** Background-fetch HF sizes for rows that don't have one yet. */
+export async function prefetchRemoteLibrarySizes(
+  entries: Array<Pick<RemoteLibraryEntry, "id" | "name" | "sizeLabel" | "params" | "description">>,
+  options?: { concurrency?: number } & HuggingFaceAuthOptions
+): Promise<void> {
+  const concurrency = Math.max(1, options?.concurrency ?? 1);
+  const pending = entries
+    .filter((entry) => needsHfSizePrefetch(entry))
+    .sort(
+      (a, b) => libraryRemoteEntryDetailScore(b) - libraryRemoteEntryDetailScore(a)
+    );
+  if (pending.length === 0) return;
+
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < pending.length) {
+      const entry = pending[cursor++];
+      try {
+        await fetchHuggingFaceModelEntry(entry.id, options);
+      } catch {
+        /* skip failed lookups */
+      }
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, pending.length) }, () => worker())
+  );
 }
 
 /** Fill in HF metadata when the model is not in the LM Studio curated catalog. */
 export async function enrichRemoteLibraryEntryFromHf(
-  entry: RemoteLibraryEntry
+  entry: RemoteLibraryEntry,
+  auth?: HuggingFaceAuthOptions
 ): Promise<RemoteLibraryEntry> {
   if (findCuratedRemoteLibraryEntry(entry.id)) return entry;
 
   const repoId = huggingFaceRepoIdFromString(entry.id);
   if (!repoId) return entry;
 
-  const hfEntry = await fetchHuggingFaceModelEntry(repoId);
+  const hfEntry = await fetchHuggingFaceModelEntry(repoId, auth);
   if (!hfEntry) return entry;
 
   return mergeRemoteLibraryEntries(entry, hfEntry);
@@ -211,9 +222,19 @@ export function looksLikeRemoteModelDownloadQuery(raw: string): boolean {
   return isPlausibleCatalogModelId(trimmed);
 }
 
+function hfListModelLooksDownloadable(model: HuggingFaceModel, id: string): boolean {
+  if (model.gguf?.total && model.gguf.total > 0) return true;
+  const tags = (model.tags ?? []).map((tag) => tag.toLowerCase());
+  if (tags.some((tag) => tag.includes("gguf"))) return true;
+  if ((model.library ?? []).some((lib) => /gguf/i.test(lib))) return true;
+  const haystack = `${id} ${buildHfDescription(model)}`;
+  return modelIdLooksVisionCapable(id) || modelHaystackLooksVisionCapable(haystack);
+}
+
 function huggingFaceModelToEntry(model: HuggingFaceModel): RemoteLibraryEntry | null {
   const id = (model.modelId ?? model.id ?? "").trim();
   if (!isPlausibleCatalogModelId(id)) return null;
+  if (!hfListModelLooksDownloadable(model, id)) return null;
   if (
     !isLmStudioMacDownloadModel(id, {
       pipelineTag: model.pipeline_tag,
@@ -229,19 +250,152 @@ function huggingFaceModelToEntry(model: HuggingFaceModel): RemoteLibraryEntry | 
   const params = extractModelParamLabel(id, slug);
   const downloads = typeof model.downloads === "number" ? model.downloads : null;
   const { displayName } = parseModelName(id);
+  const ggufBytes = model.gguf?.total;
+  const sizeLabel =
+    ggufBytes && ggufBytes > 0
+      ? resolveFileSizeLabel(ggufBytes) ?? undefined
+      : undefined;
 
   return {
     id,
     name: displayName || slug,
     publisher: publisherFromModelId(id),
     params: params ?? undefined,
+    sizeLabel,
     badge: "HF",
     badgeColor: HF_BADGE_COLOR,
-    description:
-      downloads != null && downloads > 0
-        ? `${formatDownloadCount(downloads)} downloads on Hugging Face`
-        : "Found on Hugging Face",
+    description: buildHfDescription(model),
+    downloadSource: "huggingface",
+    ...(downloads != null && downloads > 0 ? { downloads } : {}),
   };
+}
+
+type HuggingFaceListOptions = {
+  installedIds: string[];
+  modalityFilter?: ModelModalityFilter;
+  capabilityFilter?: ModelCapabilityFilter;
+  query?: string;
+  skipTextMatch?: boolean;
+};
+
+function entriesFromHuggingFaceModels(
+  models: HuggingFaceModel[],
+  options: HuggingFaceListOptions
+): RemoteLibraryEntry[] {
+  const modalityFilter = options.modalityFilter ?? "all";
+  const capabilityFilter = options.capabilityFilter ?? "all";
+  const query = options.query ?? "";
+  const entries: RemoteLibraryEntry[] = [];
+
+  for (const model of models) {
+    const entry = huggingFaceModelToEntry(model);
+    if (!entry) continue;
+    if (isModelInstalled(options.installedIds, entry.id)) continue;
+    if (!entryMatchesCapabilityFilter(entry, capabilityFilter)) continue;
+    if (!modelMatchesModalityFilter(entry.id, modalityFilter)) continue;
+    const skipTextMatch =
+      options.skipTextMatch ||
+      isCapabilityCatalogSearchQuery(query, capabilityFilter);
+    if (
+      !skipTextMatch &&
+      query.trim() &&
+      !matchesLibrarySearch(
+        [entry.id, entry.name, entry.publisher, entry.description],
+        query,
+        { id: entry.id, publisher: entry.publisher }
+      )
+    ) {
+      continue;
+    }
+    entries.push(entry);
+  }
+
+  return entries;
+}
+
+async function fetchHuggingFaceModelList(
+  params: URLSearchParams,
+  auth?: HuggingFaceAuthOptions
+): Promise<HuggingFaceModelListPage> {
+  const response = await huggingFaceApiFetch(`?${params.toString()}`, undefined, auth);
+  if (!response.ok) return { models: [], nextUrl: null };
+  const models = (await response.json()) as HuggingFaceModel[] | { error?: string };
+  return {
+    models: Array.isArray(models) ? models : [],
+    nextUrl: parseHuggingFaceLinkNextUrl(response.headers.get("Link")),
+  };
+}
+
+export async function fetchHuggingFaceModelListPage(
+  nextUrl: string,
+  auth?: HuggingFaceAuthOptions
+): Promise<HuggingFaceModelListPage> {
+  const response = await huggingFaceApiFetchUrl(nextUrl, undefined, auth);
+  if (!response.ok) return { models: [], nextUrl: null };
+  const models = (await response.json()) as HuggingFaceModel[] | { error?: string };
+  return {
+    models: Array.isArray(models) ? models : [],
+    nextUrl: parseHuggingFaceLinkNextUrl(response.headers.get("Link")),
+  };
+}
+
+async function fetchHuggingFaceModelsByPipeline(
+  pipelineTag: string,
+  options: {
+    installedIds: string[];
+    modalityFilter?: ModelModalityFilter;
+    capabilityFilter?: ModelCapabilityFilter;
+    limit?: number;
+  } & HuggingFaceAuthOptions
+): Promise<RemoteLibraryEntry[]> {
+  const params = new URLSearchParams({
+    limit: String(options.limit ?? HF_SEARCH_LIMIT),
+    sort: "downloads",
+    direction: "-1",
+    pipeline_tag: pipelineTag,
+  });
+  const { models } = await fetchHuggingFaceModelList(params, options);
+  return entriesFromHuggingFaceModels(models, {
+    ...options,
+    skipTextMatch: true,
+  });
+}
+
+async function fetchHuggingFaceModelsForCapability(
+  capabilityFilter: ModelCapabilityFilter,
+  options: {
+    installedIds: string[];
+    modalityFilter?: ModelModalityFilter;
+    limit?: number;
+  } & HuggingFaceAuthOptions
+): Promise<RemoteLibraryEntry[]> {
+  const perQueryLimit = options.limit ?? HF_SEARCH_LIMIT;
+  const searchTerms = capabilityCatalogSearchTerms(capabilityFilter);
+  const groups: RemoteLibraryEntry[][] = [];
+
+  for (const term of searchTerms) {
+    const page = await searchHuggingFaceModels(term, {
+      installedIds: options.installedIds,
+      modalityFilter: options.modalityFilter,
+      capabilityFilter,
+      limit: perQueryLimit,
+      hfToken: options.hfToken,
+    });
+    groups.push(page.entries);
+  }
+
+  if (capabilityFilter === "image") {
+    for (const pipelineTag of ["image-text-to-text", "visual-question-answering"] as const) {
+      const entries = await fetchHuggingFaceModelsByPipeline(pipelineTag, {
+        ...options,
+        capabilityFilter,
+        limit: perQueryLimit,
+      });
+      groups.push(entries);
+    }
+  }
+
+  return concatDownloadableEntries(groups);
 }
 
 export function buildDirectDownloadEntry(query: string): RemoteLibraryEntry | null {
@@ -277,24 +431,103 @@ export function buildDirectDownloadEntry(query: string): RemoteLibraryEntry | nu
   }
 }
 
+function ingestDownloadableEntry(
+  byKey: Map<string, RemoteLibraryEntry>,
+  order: string[],
+  entry: RemoteLibraryEntry
+): void {
+  const id = entry.id.trim();
+  if (!isDownloadableEntryId(id)) return;
+  if (!isLmStudioMacDownloadModel(id)) return;
+  const key = normalizeModelKey(id);
+  if (!byKey.has(key)) order.push(key);
+  const existing = byKey.get(key);
+  byKey.set(key, existing ? mergeRemoteLibraryEntries(existing, entry) : entry);
+}
+
 export function mergeDownloadableEntries(
   primary: RemoteLibraryEntry[],
   secondary: RemoteLibraryEntry[]
 ): RemoteLibraryEntry[] {
-  const seen = new Set<string>();
-  const merged: RemoteLibraryEntry[] = [];
-
+  const byKey = new Map<string, RemoteLibraryEntry>();
+  const order: string[] = [];
   for (const entry of [...primary, ...secondary]) {
-    const id = entry.id.trim();
-    if (!isDownloadableEntryId(id)) continue;
-    if (!isLmStudioMacDownloadModel(id)) continue;
-    const key = normalizeModelKey(id);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    merged.push(entry);
+    ingestDownloadableEntry(byKey, order, entry);
+  }
+  return sortRemoteLibraryEntriesByPopularity([...byKey.values()]);
+}
+
+/** Keep group order (e.g. LM Studio catalog before Hugging Face search hits). */
+export function concatDownloadableEntries(
+  groups: RemoteLibraryEntry[][]
+): RemoteLibraryEntry[] {
+  const byKey = new Map<string, RemoteLibraryEntry>();
+  const order: string[] = [];
+  for (const group of groups) {
+    for (const entry of group) {
+      ingestDownloadableEntry(byKey, order, entry);
+    }
+  }
+  return order
+    .map((key) => byKey.get(key))
+    .filter((entry): entry is RemoteLibraryEntry => entry != null);
+}
+
+function entryMatchesCapabilityFilter(
+  entry: RemoteLibraryEntry,
+  capabilityFilter: ModelCapabilityFilter
+): boolean {
+  if (capabilityFilter === "all") return true;
+  const haystack = remoteLibraryEntryHaystack(entry);
+  return modelMatchesCapabilityFilter(
+    entry.id,
+    capabilityFilter,
+    [],
+    null,
+    entry.badge,
+    haystack
+  );
+}
+
+/** Top GGUF models on Hugging Face sorted by download count (library browse default). */
+export async function fetchTrendingHuggingFaceModels(
+  options: {
+    installedIds: string[];
+    modalityFilter?: ModelModalityFilter;
+    capabilityFilter?: ModelCapabilityFilter;
+    limit?: number;
+    nextUrl?: string;
+  } & HuggingFaceAuthOptions
+): Promise<HuggingFaceModelSearchPage> {
+  const capabilityFilter = options.capabilityFilter ?? "all";
+  if (capabilityCatalogSearchTerms(capabilityFilter).length > 0) {
+    const entries = await fetchHuggingFaceModelsForCapability(capabilityFilter, {
+      installedIds: options.installedIds,
+      modalityFilter: options.modalityFilter,
+      limit: options.limit ?? HF_SEARCH_LIMIT,
+      hfToken: options.hfToken,
+    });
+    return { entries, nextUrl: null };
   }
 
-  return merged;
+  const limit = options.limit ?? HF_SEARCH_LIMIT;
+  const listPage = options.nextUrl
+    ? await fetchHuggingFaceModelListPage(options.nextUrl, options)
+    : await fetchHuggingFaceModelList(
+        new URLSearchParams({
+          limit: String(limit),
+          sort: "downloads",
+          direction: "-1",
+          filter: "gguf",
+        }),
+        options
+      );
+  const entries = entriesFromHuggingFaceModels(listPage.models, {
+    installedIds: options.installedIds,
+    modalityFilter: options.modalityFilter,
+    capabilityFilter,
+  });
+  return { entries, nextUrl: listPage.nextUrl };
 }
 
 export async function searchHuggingFaceModels(
@@ -302,55 +535,44 @@ export async function searchHuggingFaceModels(
   options: {
     installedIds: string[];
     modalityFilter?: ModelModalityFilter;
+    capabilityFilter?: ModelCapabilityFilter;
     limit?: number;
-  }
-): Promise<RemoteLibraryEntry[]> {
+    nextUrl?: string;
+  } & HuggingFaceAuthOptions
+): Promise<HuggingFaceModelSearchPage> {
   const parsed = parseLibrarySearchQuery(query);
   const apiTerm = librarySearchApiTerm(query);
-  if (!parsed.providerPrefix && apiTerm.length < 2) return [];
+  if (!parsed.providerPrefix && apiTerm.length < 2) {
+    return { entries: [], nextUrl: null };
+  }
 
   const limit = options.limit ?? HF_SEARCH_LIMIT;
-  const params = new URLSearchParams({
-    limit: String(limit),
-    sort: "downloads",
-    direction: "-1",
+  const listPage = options.nextUrl
+    ? await fetchHuggingFaceModelListPage(options.nextUrl, options)
+    : await fetchHuggingFaceModelList(
+        (() => {
+          const params = new URLSearchParams({
+            limit: String(limit),
+            sort: "downloads",
+            direction: "-1",
+          });
+          if (parsed.providerPrefix) {
+            params.set("author", parsed.providerPrefix);
+            if (parsed.searchText.trim()) {
+              params.set("search", parsed.searchText.trim());
+            }
+          } else {
+            params.set("search", apiTerm);
+          }
+          return params;
+        })(),
+        options
+      );
+  const entries = entriesFromHuggingFaceModels(listPage.models, {
+    installedIds: options.installedIds,
+    modalityFilter: options.modalityFilter,
+    capabilityFilter: options.capabilityFilter,
+    query,
   });
-  if (parsed.providerPrefix) {
-    params.set("author", parsed.providerPrefix);
-    if (parsed.searchText.trim()) {
-      params.set("search", parsed.searchText.trim());
-    }
-  } else {
-    params.set("search", apiTerm);
-  }
-
-  const url = `${HF_API}?${params.toString()}`;
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error("Could not search Hugging Face");
-  }
-
-  const models = (await response.json()) as HuggingFaceModel[];
-  if (!Array.isArray(models)) return [];
-
-  const modalityFilter = options.modalityFilter ?? "all";
-  const entries: RemoteLibraryEntry[] = [];
-  for (const model of models) {
-    const entry = huggingFaceModelToEntry(model);
-    if (!entry) continue;
-    if (isModelInstalled(options.installedIds, entry.id)) continue;
-    if (!modelMatchesModalityFilter(entry.id, modalityFilter)) continue;
-    if (
-      !matchesLibrarySearch(
-        [entry.id, entry.name, entry.publisher, entry.description],
-        query,
-        { id: entry.id, publisher: entry.publisher }
-      )
-    ) {
-      continue;
-    }
-    entries.push(entry);
-  }
-
-  return entries;
+  return { entries, nextUrl: listPage.nextUrl };
 }

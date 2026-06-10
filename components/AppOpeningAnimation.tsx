@@ -1,60 +1,40 @@
-import LottieView from "lottie-react-native";
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { Animated, Easing, Image, StyleSheet, Text, View } from "react-native";
 import { APP_BRAND_TITLE, APP_BRAND_TITLE_SUFFIX } from "../lib/app-name";
-import { androidHeadLottieColorFilters } from "../lib/android-head-lottie";
-import { brandMarkCornerMask } from "../lib/brand-mark";
 import { AppFonts } from "../lib/typography";
 import { useTheme } from "../lib/theme";
 
-const lmStudioLogo = require("../assets/lm-studio-logo.png");
-const androidFaceOverlay = require("../assets/android-face-overlay.json");
+const openingHeroGif = require("../assets/readme-hero.gif");
 
-const androidHeadColorFilters = androidHeadLottieColorFilters();
-
-const MARK_BOX = 140;
-const markCorners = brandMarkCornerMask(MARK_BOX);
-const LOTTIE_END_FRAME = 108;
+/** Keep in sync with scripts/compose-readme-hero.mjs (CANVAS / HERO_SIZE). */
+const OPENING_GIF_CANVAS = 220;
+const OPENING_GIF_ART = 200;
+/** On-screen hero size. */
+const MARK_BOX = 200;
+/** Visible logo width/height after cropping GIF canvas padding. */
+const OPENING_ART_BOX = Math.round((MARK_BOX * OPENING_GIF_ART) / OPENING_GIF_CANVAS);
+const OPENING_ART_INSET = (MARK_BOX - OPENING_ART_BOX) / 2;
+/** 45 frames × 50 ms (gifsicle delay). */
+const GIF_PLAY_MS = 2250;
 const POP_IN_MS = 340;
-const BADGE_LEAD_MS = 160;
-const BADGE_IN_MS = 220;
 const HOLD_MS = 160;
 const EXIT_MS = 260;
-const TOTAL_BUDGET_MS = 2800;
+const TOTAL_BUDGET_MS = POP_IN_MS + GIF_PLAY_MS + HOLD_MS + EXIT_MS + 400;
 
 const easePop = Easing.out(Easing.cubic);
 
 export default function AppOpeningAnimation({ onFinish }: { onFinish: () => void }) {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const styles = useMemo(() => createStyles(colors.bg), [colors.bg]);
+  const titleColor = isDark ? "#ffffff" : colors.primaryLight;
 
-  const lottieRef = useRef<LottieView>(null);
   const overlayOpacity = useRef(new Animated.Value(1)).current;
   const markScale = useRef(new Animated.Value(0.9)).current;
   const markOpacity = useRef(new Animated.Value(0)).current;
   const titleOpacity = useRef(new Animated.Value(0)).current;
-  const badgeOpacity = useRef(new Animated.Value(0)).current;
   const closingRef = useRef(false);
-  const finaleStartedRef = useRef(false);
-  const lottieReadyRef = useRef(false);
-  const badgeGateRef = useRef(false);
-  const lottieStartedRef = useRef(false);
-
-  const playLottie = useCallback(() => {
-    lottieRef.current?.play(0, LOTTIE_END_FRAME);
-  }, []);
-
-  const tryStartBadge = useCallback(() => {
-    if (!badgeGateRef.current || !lottieReadyRef.current || lottieStartedRef.current) return;
-    lottieStartedRef.current = true;
-    Animated.timing(badgeOpacity, {
-      toValue: 1,
-      duration: BADGE_IN_MS,
-      easing: easePop,
-      useNativeDriver: true,
-    }).start();
-    playLottie();
-  }, [badgeOpacity, playLottie]);
+  const finaleScheduledRef = useRef(false);
+  const gifLoadedRef = useRef(false);
 
   const closeOverlay = useCallback(() => {
     if (closingRef.current) return;
@@ -69,30 +49,19 @@ export default function AppOpeningAnimation({ onFinish }: { onFinish: () => void
     });
   }, [onFinish, overlayOpacity]);
 
-  const handleLottieComplete = useCallback(() => {
-    if (finaleStartedRef.current) return;
-    finaleStartedRef.current = true;
-    setTimeout(() => closeOverlay(), HOLD_MS);
+  const scheduleFinale = useCallback(() => {
+    if (finaleScheduledRef.current) return;
+    finaleScheduledRef.current = true;
+    setTimeout(() => closeOverlay(), GIF_PLAY_MS + HOLD_MS);
   }, [closeOverlay]);
 
-  const handleLottieLayout = useCallback(() => {
-    if (lottieReadyRef.current) return;
-    lottieReadyRef.current = true;
-    tryStartBadge();
-  }, [tryStartBadge]);
+  const handleGifLoad = useCallback(() => {
+    if (gifLoadedRef.current) return;
+    gifLoadedRef.current = true;
+    scheduleFinale();
+  }, [scheduleFinale]);
 
   useEffect(() => {
-    const badgeLead = setTimeout(() => {
-      badgeGateRef.current = true;
-      tryStartBadge();
-    }, BADGE_LEAD_MS);
-
-    const playFallback = setTimeout(() => {
-      badgeGateRef.current = true;
-      lottieReadyRef.current = true;
-      tryStartBadge();
-    }, BADGE_LEAD_MS + 120);
-
     Animated.parallel([
       Animated.timing(markOpacity, {
         toValue: 1,
@@ -112,22 +81,13 @@ export default function AppOpeningAnimation({ onFinish }: { onFinish: () => void
         easing: easePop,
         useNativeDriver: true,
       }),
-    ]).start(({ finished }) => {
-      if (!finished) return;
-      badgeGateRef.current = true;
-      tryStartBadge();
-    });
-
-    return () => {
-      clearTimeout(badgeLead);
-      clearTimeout(playFallback);
-    };
-  }, [markOpacity, markScale, titleOpacity, tryStartBadge]);
+    ]).start();
+  }, [markOpacity, markScale, titleOpacity]);
 
   useEffect(() => {
-    const fallback = setTimeout(() => handleLottieComplete(), TOTAL_BUDGET_MS);
+    const fallback = setTimeout(() => closeOverlay(), TOTAL_BUDGET_MS);
     return () => clearTimeout(fallback);
-  }, [handleLottieComplete]);
+  }, [closeOverlay]);
 
   return (
     <Animated.View style={[styles.root, { opacity: overlayOpacity }]}>
@@ -135,35 +95,24 @@ export default function AppOpeningAnimation({ onFinish }: { onFinish: () => void
         <View style={styles.heroColumn}>
           <Animated.View
             style={[
-              styles.markAnchor,
+              styles.markWrap,
               {
                 opacity: markOpacity,
                 transform: [{ scale: markScale }],
               },
             ]}
           >
-            <View style={[styles.markClip, markCorners]}>
-              <Image source={lmStudioLogo} style={styles.markLogo} resizeMode="cover" />
-            </View>
-
-            <Animated.View style={[styles.badgeLayer, { opacity: badgeOpacity }]}>
-              <LottieView
-                ref={lottieRef}
-                source={androidFaceOverlay}
-                autoPlay={false}
-                loop={false}
-                resizeMode="contain"
-                style={styles.badgeLottie}
-                colorFilters={androidHeadColorFilters}
-                onAnimationFinish={handleLottieComplete}
-                onLayout={handleLottieLayout}
-              />
-            </Animated.View>
+            <Image
+              source={openingHeroGif}
+              style={styles.markGif}
+              resizeMode="contain"
+              onLoad={handleGifLoad}
+            />
           </Animated.View>
 
           <Animated.View style={[styles.titleBlock, { opacity: titleOpacity }]}>
-            <Text style={[styles.title, { color: colors.text }]}>{APP_BRAND_TITLE}</Text>
-            <Text style={[styles.titleSuffix, { color: colors.textMuted }]}>
+            <Text style={[styles.title, { color: titleColor }]}>{APP_BRAND_TITLE}</Text>
+            <Text style={[styles.titleSuffix, { color: colors.textDim }]}>
               {APP_BRAND_TITLE_SUFFIX}
             </Text>
           </Animated.View>
@@ -190,45 +139,38 @@ function createStyles(appBg: string) {
       alignItems: "center",
       justifyContent: "center",
     },
+    markWrap: {
+      width: OPENING_ART_BOX,
+      height: OPENING_ART_BOX,
+      overflow: "hidden",
+    },
+    markGif: {
+      width: MARK_BOX,
+      height: MARK_BOX,
+      marginLeft: -OPENING_ART_INSET,
+      marginTop: -OPENING_ART_INSET,
+    },
     titleBlock: {
-      alignSelf: "center",
-      marginTop: 12,
+      width: OPENING_ART_BOX,
+      marginTop: 10,
+      alignItems: "flex-end",
     },
     title: {
-      fontFamily: AppFonts.brandSubtitle,
-      fontSize: 30,
-      letterSpacing: -0.4,
-      lineHeight: 36,
+      fontFamily: AppFonts.openingBrand,
+      fontSize: 32,
+      letterSpacing: 1.1,
+      lineHeight: 34,
+      textAlign: "right",
+      includeFontPadding: false,
     },
     titleSuffix: {
       fontFamily: AppFonts.androidBrand,
-      fontSize: 12,
-      letterSpacing: 0.3,
-      lineHeight: 16,
+      fontSize: 11,
+      letterSpacing: 0.2,
+      lineHeight: 13,
       marginTop: 2,
-      alignSelf: "flex-end",
-    },
-    markAnchor: {
-      width: MARK_BOX,
-      height: MARK_BOX,
-    },
-    markClip: {
-      ...StyleSheet.absoluteFillObject,
-      overflow: "hidden",
-    },
-    markLogo: {
-      ...StyleSheet.absoluteFillObject,
-      width: MARK_BOX,
-      height: MARK_BOX,
-    },
-    badgeLayer: {
-      ...StyleSheet.absoluteFillObject,
-      zIndex: 2,
-      elevation: 2,
-    },
-    badgeLottie: {
-      width: MARK_BOX,
-      height: MARK_BOX,
+      textAlign: "right",
+      includeFontPadding: false,
     },
   });
 }

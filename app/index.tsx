@@ -1,17 +1,6 @@
-import { Href, Redirect } from "expo-router";
-import React, { useEffect, useState } from "react";
-import { isOnboardingDone } from "../lib/storage";
+import { Redirect } from "expo-router";
+import React from "react";
 
 export default function Index() {
-  const [href, setHref] = useState<Href | null>(null);
-
-  useEffect(() => {
-    void isOnboardingDone().then((done) => {
-      setHref(done ? "/chat" : "/onboarding");
-    });
-  }, []);
-
-  if (!href) return null;
-
-  return <Redirect href={href} />;
+  return <Redirect href="/chat" />;
 }

@@ -1,5 +1,9 @@
-import { normalizeModelKey } from "./remote-model-library";
 import type { LMModel } from "./types";
+
+/** Lowercase catalog key without `@quant` variant suffix or `.gguf` extension. */
+export function normalizeModelKey(id: string): string {
+  return id.toLowerCase().replace(/@.*$/, "").replace(/\.gguf$/i, "");
+}
 
 function stripVariantSuffix(key: string): string {
   const at = key.lastIndexOf("@");

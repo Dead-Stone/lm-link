@@ -1,4 +1,5 @@
-import { REMOTE_MODEL_LIBRARY } from "./remote-model-library";
+import { isPlausibleCatalogModelId } from "./catalog-model-id";
+import { LibraryDownloadSource, REMOTE_MODEL_LIBRARY } from "./remote-model-library";
 
 function trimInput(raw: string): string {
   return raw.trim().replace(/\s+/g, "");
@@ -9,7 +10,10 @@ function isHttpUrl(value: string): boolean {
 }
 
 /** Normalize a pasted model string for LM Studio `POST /api/v1/models/download`. */
-export function resolveRemoteDownloadModelString(raw: string): string {
+export function resolveRemoteDownloadModelString(
+  raw: string,
+  options?: { downloadSource?: LibraryDownloadSource }
+): string {
   const trimmed = trimInput(raw);
   if (!trimmed) {
     throw new Error("Enter a model ID or Hugging Face link.");
@@ -36,8 +40,12 @@ export function resolveRemoteDownloadModelString(raw: string): string {
     return catalogMatch.id;
   }
 
-  if (trimmed.includes("/")) {
-    return `https://huggingface.co/${trimmed.replace(/^\/+/, "")}`;
+  // LM Studio hub catalog ids (org/model) — not always the same as a HF repo path.
+  if (isPlausibleCatalogModelId(trimmed)) {
+    if (options?.downloadSource === "huggingface") {
+      return `https://huggingface.co/${trimmed.replace(/^\/+/, "")}`;
+    }
+    return trimmed;
   }
 
   return trimmed;

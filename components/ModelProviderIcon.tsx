@@ -1,13 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { useState } from "react";
-import { StyleProp, View, ViewStyle } from "react-native";
-import { SvgUri } from "react-native-svg";
-import {
-  getBrandLogoUri,
-  ModelBrandKey,
-  resolveModelBrandKey,
-} from "../lib/model-provider-logos";
+import React from "react";
+import { Image, StyleProp, View, ViewStyle } from "react-native";
+import { ModelBrandKey, resolveModelBrandKey } from "../lib/model-provider-logos";
+import BrandLogoMark from "./BrandLogoMark";
 import GoogleColorLogo from "./GoogleColorLogo";
+import MicrosoftColorLogo from "./MicrosoftColorLogo";
+import OpenAIColorLogo from "./OpenAIColorLogo";
 
 type Props = {
   /** Publisher name, e.g. "Meta", "Google" */
@@ -25,6 +23,37 @@ type Props = {
   style?: StyleProp<ViewStyle>;
 };
 
+function UnknownProviderMark({
+  label,
+  size,
+  color,
+  style,
+}: {
+  label: string;
+  size: number;
+  color: string;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const iconSize = Math.max(7, Math.round(size * 0.56));
+
+  return (
+    <View
+      accessibilityLabel={label.trim() || "Unknown provider"}
+      style={[
+        {
+          width: size,
+          height: size,
+          alignItems: "center",
+          justifyContent: "center",
+        },
+        style,
+      ]}
+    >
+      <Ionicons name="cube-outline" size={iconSize} color={color} />
+    </View>
+  );
+}
+
 export default function ModelProviderIcon({
   provider,
   family,
@@ -35,16 +64,18 @@ export default function ModelProviderIcon({
   monochrome = false,
   style,
 }: Props) {
-  const [failed, setFailed] = useState(false);
-
   const brandKey =
     brand ?? resolveModelBrandKey(provider, family, modelId);
 
-  if (!brandKey || failed) {
+  if (!brandKey) {
+    const fallbackLabel = provider ?? family ?? modelId ?? "?";
     return (
-      <View style={[{ width: size, height: size, alignItems: "center", justifyContent: "center" }, style]}>
-        <Ionicons name="cube-outline" size={size} color={color} />
-      </View>
+      <UnknownProviderMark
+        label={fallbackLabel}
+        size={size}
+        color={color}
+        style={style}
+      />
     );
   }
 
@@ -56,18 +87,53 @@ export default function ModelProviderIcon({
     );
   }
 
+  if (brandKey === "microsoft" && !monochrome) {
+    return (
+      <View style={[{ width: size, height: size, alignItems: "center", justifyContent: "center" }, style]}>
+        <MicrosoftColorLogo size={size} />
+      </View>
+    );
+  }
+
+  if (brandKey === "openai") {
+    return (
+      <View style={[{ width: size, height: size, alignItems: "center", justifyContent: "center" }, style]}>
+        <OpenAIColorLogo size={size} color={monochrome ? color : "#412991"} />
+      </View>
+    );
+  }
+
+  if (brandKey === "lmstudio" && !monochrome) {
+    return (
+      <View style={[{ width: size, height: size, alignItems: "center", justifyContent: "center" }, style]}>
+        <Image
+          source={require("../assets/lm-studio-logo.png")}
+          style={{ width: size, height: size }}
+          resizeMode="contain"
+        />
+      </View>
+    );
+  }
+
+  if (brandKey === "huggingface" && !monochrome) {
+    return (
+      <View style={[{ width: size, height: size, alignItems: "center", justifyContent: "center" }, style]}>
+        <Image
+          source={require("../assets/huggingface-logo.png")}
+          style={{ width: size, height: size }}
+          resizeMode="contain"
+        />
+      </View>
+    );
+  }
+
   return (
-    <View style={[{ width: size, height: size }, style]}>
-      <SvgUri
-        uri={
-          monochrome
-            ? getBrandLogoUri(brandKey, color)
-            : getBrandLogoUri(brandKey)
-        }
-        width={size}
-        height={size}
-        onError={() => setFailed(true)}
-      />
-    </View>
+    <BrandLogoMark
+      brand={brandKey}
+      size={size}
+      color={color}
+      monochrome={monochrome}
+      style={style}
+    />
   );
 }

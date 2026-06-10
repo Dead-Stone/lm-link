@@ -17,6 +17,12 @@
 
 import { File, Paths } from "expo-file-system";
 import { displayNameFromGgufFilename } from "./model-download-string";
+import {
+  ModelCapabilityFilter,
+  modelMatchesCapabilityFilter,
+  modelIdLooksThinkingCapable,
+  resolveModelModalities,
+} from "./vision-models";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isSystemRoleUnsupportedError } from "./chat-request";
 
@@ -91,13 +97,25 @@ export interface LocalModelInfo {
   filename: string;
 }
 
-export function localModelSupportsThinking(model: LocalModelInfo): boolean {
-  const hay = `${model.key} ${model.name} ${model.description} ${model.badge}`.toLowerCase();
-  return /r1|reason|think|o1|deepseek-r1|qwq/.test(hay);
+export function localModelIdHaystack(model: LocalModelInfo): string {
+  return `${model.key} ${model.name} ${model.description} ${model.badge} ${model.downloadUrl} ${model.filename}`;
 }
 
-export function localModelSupportsVision(_model: LocalModelInfo): boolean {
-  return false;
+export function localModelSupportsThinking(model: LocalModelInfo): boolean {
+  const hay = localModelIdHaystack(model).toLowerCase();
+  return modelIdLooksThinkingCapable(hay) || /reason|think/.test(model.badge.toLowerCase());
+}
+
+export function localModelModalities(model: LocalModelInfo) {
+  return resolveModelModalities(localModelIdHaystack(model));
+}
+
+export function localModelSupportsVision(model: LocalModelInfo): boolean {
+  return localModelModalities(model).includes("image");
+}
+
+export function localModelSupportsVideo(model: LocalModelInfo): boolean {
+  return localModelModalities(model).includes("video");
 }
 
 export const LOCAL_MODEL_CATALOG: LocalModelInfo[] = [
@@ -312,7 +330,7 @@ export const LOCAL_MODEL_CATALOG: LocalModelInfo[] = [
   },
 ];
 
-/** On-device picks for Quick download (chat picker + model library). */
+/** On-device picks for Quick download when capability filter is All. */
 export const QUICK_ACCESS_LOCAL_MODEL_KEYS = [
   "llama32_1b",
   "gemma3_1b",
@@ -326,12 +344,79 @@ export const QUICK_ACCESS_LOCAL_MODEL_KEYS = [
   "qwen25_3b",
 ] as const;
 
-export function getQuickAccessLocalModels(): LocalModelInfo[] {
+export const QUICK_ACCESS_LOCAL_BY_CAPABILITY: Record<
+  ModelCapabilityFilter,
+  readonly string[]
+> = {
+  all: QUICK_ACCESS_LOCAL_MODEL_KEYS,
+  text: [
+    "llama32_1b",
+    "gemma3_1b",
+    "qwen25_0b5",
+    "qwen25_1b5",
+    "gemma2_2b",
+    "smollm2_1b7",
+    "llama32_3b",
+    "qwen25_3b",
+    "phi35_mini",
+    "mistral7b",
+  ],
+  image: [],
+  video: [],
+  thinking: [
+    "deepseek_r1_1b5",
+    "phi4_mini",
+    "qwen25_7b",
+    "llama31_8b",
+    "mistral7b",
+    "qwen25_3b",
+    "llama32_3b",
+    "phi35_mini",
+    "smollm2_1b7",
+    "qwen25_1b5",
+  ],
+};
+
+export const QUICK_ACCESS_LIMIT = 10;
+
+function localQuickAccessMatches(model: LocalModelInfo, capability: ModelCapabilityFilter): boolean {
+  if (capability === "all") return true;
+  const haystack = localModelIdHaystack(model);
+  return modelMatchesCapabilityFilter(
+    haystack,
+    capability,
+    [],
+    undefined,
+    model.badge,
+    haystack
+  );
+}
+
+export function getQuickAccessLocalModels(
+  capability: ModelCapabilityFilter = "all",
+  limit = QUICK_ACCESS_LIMIT
+): LocalModelInfo[] {
+  const primary = QUICK_ACCESS_LOCAL_BY_CAPABILITY[capability];
+  const pool = [
+    ...primary,
+    ...LOCAL_MODEL_CATALOG.map((model) => model.key),
+    ...QUICK_ACCESS_LOCAL_BY_CAPABILITY.all,
+  ];
+
+  const seen = new Set<string>();
   const models: LocalModelInfo[] = [];
-  for (const key of QUICK_ACCESS_LOCAL_MODEL_KEYS) {
+
+  for (const key of pool) {
+    if (models.length >= limit) break;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
     const model = LOCAL_MODEL_CATALOG.find((item) => item.key === key);
-    if (model) models.push(model);
+    if (!model) continue;
+    if (!localQuickAccessMatches(model, capability)) continue;
+    models.push(model);
   }
+
   return models;
 }
 
@@ -716,14 +801,22 @@ export function useOnDeviceLLM(
       abortRef.current = false;
 
       const appendResponseToken = (token: string) => {
+        if (!token) return;
         responseBufferRef.current += token;
         if (responseFrameRef.current !== null) return;
-        responseFrameRef.current = requestAnimationFrame(() => {
-          responseFrameRef.current = null;
+        const loop = () => {
           const chunk = responseBufferRef.current;
           responseBufferRef.current = "";
-          setResponse((prev) => prev + chunk);
-        });
+          if (chunk) {
+            setResponse((prev) => prev + chunk);
+          }
+          if (responseBufferRef.current) {
+            responseFrameRef.current = requestAnimationFrame(loop);
+          } else {
+            responseFrameRef.current = null;
+          }
+        };
+        responseFrameRef.current = requestAnimationFrame(loop);
       };
 
       const run = async (payload: Array<{ role: string; content: string }>) => {

@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { Platform } from "react-native";
 import { useSettings } from "./context";
 
 export type ThemeMode = "dark" | "light";
@@ -249,13 +250,31 @@ export function useAccentPalette(): ThemeColors {
 }
 
 export function getMarkdownStyles(c: ThemeColors) {
+  const codeFont = Platform.select({
+    ios: "Menlo",
+    android: "monospace",
+    default: "monospace",
+  });
+
   return {
-    body: { color: c.markdownBody, fontSize: 15, lineHeight: 22 },
-    paragraph: { marginTop: 0, marginBottom: 4, color: c.markdownBody },
+    body: {
+      color: c.markdownBody,
+      fontSize: 15,
+      lineHeight: 22,
+      flexShrink: 1,
+    },
+    paragraph: {
+      marginTop: 0,
+      marginBottom: 8,
+      color: c.markdownBody,
+      flexShrink: 1,
+    },
+    bullet_list_content: { flex: 1, flexShrink: 1 },
+    ordered_list_content: { flex: 1, flexShrink: 1 },
     code_inline: {
       backgroundColor: c.markdownCodeBg,
       color: c.markdownCodeText,
-      fontFamily: "Courier",
+      fontFamily: codeFont,
       fontSize: 13,
       paddingHorizontal: 5,
       paddingVertical: 1,
@@ -268,14 +287,19 @@ export function getMarkdownStyles(c: ThemeColors) {
       marginVertical: 6,
       borderWidth: 1,
       borderColor: c.markdownFenceBorder,
+      color: c.markdownCodeText,
+      fontFamily: codeFont,
+      fontSize: 13,
     },
     code_block: {
       backgroundColor: c.markdownFenceBg,
       borderRadius: 8,
       padding: 12,
       marginVertical: 6,
+      borderWidth: 1,
+      borderColor: c.markdownFenceBorder,
       color: c.markdownCodeText,
-      fontFamily: "Courier",
+      fontFamily: codeFont,
       fontSize: 13,
     },
     strong: { color: c.markdownStrong, fontWeight: "700" as const },
@@ -283,8 +307,9 @@ export function getMarkdownStyles(c: ThemeColors) {
     heading1: { color: c.markdownHeading, fontSize: 20, fontWeight: "700" as const, marginBottom: 6 },
     heading2: { color: c.markdownHeading, fontSize: 18, fontWeight: "600" as const, marginBottom: 4 },
     heading3: { color: c.markdownBody, fontSize: 16, fontWeight: "600" as const, marginBottom: 4 },
-    bullet_list: { marginVertical: 4 },
-    list_item: { color: c.markdownBody, marginBottom: 2 },
+    bullet_list: { marginVertical: 6 },
+    ordered_list: { marginVertical: 6 },
+    list_item: { color: c.markdownBody, marginBottom: 4 },
     blockquote: {
       backgroundColor: c.markdownBlockquoteBg,
       borderLeftColor: c.primary,

@@ -4,6 +4,9 @@ import { LMModel } from "./types";
 export type ModelModality = "text" | "image" | "video";
 export type ModelModalityFilter = "all" | ModelModality;
 
+/** Modality plus reasoning/thinking models. */
+export type ModelCapabilityFilter = ModelModalityFilter | "thinking";
+
 const VISION_ID_PATTERNS: RegExp[] = [
   /(^|[/_-])vlm([/_-]|$)/i,
   /qwen[\d._-]*vl/i,
@@ -16,11 +19,34 @@ const VISION_ID_PATTERNS: RegExp[] = [
   /cogvlm/i,
   /minicpm-v/i,
   /gemma-3n/i,
+  /gemma-4/i,
   /glm-4\.6v/i,
   /qwen3-vl/i,
   /deepseek-vl/i,
   /fuyu/i,
   /bakllava/i,
+  /paligemma/i,
+  /phi[-_]?(3|4)[._-]?(vision|multimodal)/i,
+  /[-_]vision[-_]/i,
+  /nano[-_]?vl/i,
+  /nemotron[-_].*vl/i,
+  /uform/i,
+  /kosmos/i,
+  /florence/i,
+  /instructblip/i,
+  /blip2/i,
+  /mllm/i,
+  /multimodal/i,
+  /multi-modal/i,
+];
+
+const VISION_HAYSTACK_PATTERNS: RegExp[] = [
+  ...VISION_ID_PATTERNS,
+  /\bvision\b/i,
+  /image-text-to-text/i,
+  /image-to-text/i,
+  /visual-question/i,
+  /visual question/i,
 ];
 
 const VIDEO_ID_PATTERNS: RegExp[] = [
@@ -42,6 +68,26 @@ export function modelIdLooksVisionCapable(modelId: string): boolean {
   const key = modelId.trim().toLowerCase();
   if (!key) return false;
   return VISION_ID_PATTERNS.some((pattern) => pattern.test(key));
+}
+
+export function modelHaystackLooksVisionCapable(haystack: string): boolean {
+  const key = haystack.trim().toLowerCase();
+  if (!key) return false;
+  if (badgeLooksVisionCapable(haystack)) return true;
+  return VISION_HAYSTACK_PATTERNS.some((pattern) => pattern.test(key));
+}
+
+export function remoteLibraryEntryHaystack(entry: {
+  id: string;
+  name?: string;
+  publisher?: string;
+  description?: string;
+  badge?: string;
+  params?: string;
+}): string {
+  return [entry.id, entry.name, entry.publisher, entry.description, entry.badge, entry.params]
+    .filter(Boolean)
+    .join(" ");
 }
 
 export function modelIdLooksVideoCapable(modelId: string): boolean {
@@ -96,12 +142,11 @@ export function modelSupportsVision(
   for (const entry of catalog) {
     if (!isSameModelId(entry.id, id)) continue;
     if (entry.type === "vlm") return true;
-    if (
-      entry.type === "llm" ||
-      entry.type === "embeddings" ||
-      entry.type === "embedding"
-    ) {
+    if (entry.type === "embeddings" || entry.type === "embedding") {
       return false;
+    }
+    if (entry.type === "llm") {
+      return modelIdLooksVisionCapable(id);
     }
     break;
   }
@@ -109,18 +154,27 @@ export function modelSupportsVision(
   return modelIdLooksVisionCapable(id);
 }
 
+function modalityHaystack(modelId: string, haystack?: string | null): string {
+  return haystack ? `${modelId} ${haystack}`.trim() : modelId;
+}
+
 export function resolveModelModalities(
   modelId: string,
   catalog: Iterable<LMModel> = [],
-  modelType?: string | null
+  modelType?: string | null,
+  haystack?: string | null
 ): ModelModality[] {
   const type = modelType?.toLowerCase();
   if (type === "embeddings" || type === "embedding") {
     return ["text"];
   }
 
-  const hasVideo = modelIdLooksVideoCapable(modelId);
-  const hasImage = type === "vlm" || modelSupportsVision(modelId, catalog);
+  const combined = modalityHaystack(modelId, haystack);
+  const hasVideo = modelIdLooksVideoCapable(combined);
+  const hasImage =
+    type === "vlm" ||
+    modelHaystackLooksVisionCapable(combined) ||
+    modelSupportsVision(modelId, catalog);
   const modalities: ModelModality[] = ["text"];
 
   if (hasImage) modalities.push("image");
@@ -182,14 +236,106 @@ export function modelMatchesModalityFilter(
   modelId: string,
   filter: ModelModalityFilter,
   catalog: Iterable<LMModel> = [],
-  modelType?: string | null
+  modelType?: string | null,
+  haystack?: string | null
 ): boolean {
   if (filter === "all") return true;
-  const modalities = resolveModelModalities(modelId, catalog, modelType);
+  const modalities = resolveModelModalities(modelId, catalog, modelType, haystack);
   if (filter === "text") {
     return modalities.length === 1 && modalities[0] === "text";
   }
   return modalities.includes(filter);
+}
+
+export function capabilityToModalityFilter(
+  filter: ModelCapabilityFilter
+): ModelModalityFilter {
+  // Fetch a broad catalog, then filter client-side with name/description metadata.
+  if (filter === "thinking" || filter === "image" || filter === "video") return "all";
+  return filter;
+}
+
+/** Primary LM Studio catalog search term for a capability browse (no user query). */
+export function capabilityCatalogSearchHint(filter: ModelCapabilityFilter): string {
+  const terms = capabilityCatalogSearchTerms(filter);
+  return terms[0] ?? "";
+}
+
+/** Hugging Face search terms to run when browsing by capability. */
+export function capabilityCatalogSearchTerms(filter: ModelCapabilityFilter): string[] {
+  switch (filter) {
+    case "image":
+      return ["vlm", "llava", "vision"];
+    case "video":
+      return ["video", "omni"];
+    case "thinking":
+      return ["r1", "reasoning"];
+    default:
+      return [];
+  }
+}
+
+/** True when `search` is an auto-generated capability browse term (not user-typed). */
+export function isCapabilityCatalogSearchQuery(
+  search: string,
+  capabilityFilter: ModelCapabilityFilter = "all"
+): boolean {
+  const trimmed = search.trim().toLowerCase();
+  if (!trimmed) return false;
+  if (capabilityFilter !== "all") {
+    return capabilityCatalogSearchTerms(capabilityFilter).some((term) => term === trimmed);
+  }
+  return (["image", "video", "thinking"] as const).some((filter) =>
+    capabilityCatalogSearchTerms(filter).some((term) => term === trimmed)
+  );
+}
+
+export function modelMatchesCapabilityFilter(
+  modelId: string,
+  filter: ModelCapabilityFilter,
+  catalog: Iterable<LMModel> = [],
+  modelType?: string | null,
+  badge?: string | null,
+  haystack?: string | null
+): boolean {
+  if (filter === "all") return true;
+
+  const combined = `${modelId} ${haystack ?? ""}`.trim();
+
+  if (filter === "thinking") {
+    return (
+      modelSupportsThinking(modelId, catalog, modelType, badge) ||
+      modelIdLooksThinkingCapable(combined)
+    );
+  }
+
+  if (filter === "image") {
+    if (badgeLooksVisionCapable(badge)) return true;
+    if (modelHaystackLooksVisionCapable(combined)) return true;
+    return modelMatchesModalityFilter(modelId, filter, catalog, modelType);
+  }
+
+  if (filter === "video") {
+    if (modelIdLooksVideoCapable(combined)) return true;
+    return modelMatchesModalityFilter(modelId, filter, catalog, modelType);
+  }
+
+  return modelMatchesModalityFilter(modelId, filter, catalog, modelType, haystack);
+}
+
+export function capabilityFilterLabel(filter: ModelCapabilityFilter): string {
+  switch (filter) {
+    case "text":
+      return "text-only";
+    case "image":
+      return "vision";
+    case "video":
+      return "video";
+    case "thinking":
+      return "thinking";
+    default:
+      return "";
+  }
 }
 
 export function localVisionRequiredMessage(): string {

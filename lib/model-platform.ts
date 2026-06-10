@@ -38,10 +38,10 @@ export function platformShellIcon(
 export function platformShellLayout(platform: ModelPlatform, size: number) {
   switch (platform) {
     case "hub":
-      return { logoScale: 0.42, logoTop: size * 0.3 };
+      return { logoScale: 0.46, logoTop: size * 0.28 };
     case "pc":
-      return { logoScale: 0.38, logoTop: size * 0.26 };
+      return { logoScale: 0.42, logoTop: size * 0.24 };
     case "phone":
-      return { logoScale: 0.36, logoTop: size * 0.32 };
+      return { logoScale: 0.4, logoTop: size * 0.3 };
   }
 }

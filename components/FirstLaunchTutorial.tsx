@@ -18,6 +18,7 @@ import { markOnboardingDone } from "../lib/storage";
 import { getSettingsPalette, radii, ThemeColors, useTheme } from "../lib/theme";
 import DotGridBackground from "./DotGridBackground";
 import SetupGuideIllustration from "./SetupGuideIllustrations";
+import TransparentSheet from "./TransparentSheet";
 import TutorialAndroidGuide, { TutorialSlideNote } from "./TutorialAndroidGuide";
 
 const SLIDES = FIRST_LAUNCH_SLIDES;
@@ -26,15 +27,25 @@ const PAGE_WIDTH = Dimensions.get("window").width;
 type Props = {
   onComplete: () => void;
   mode?: "onboarding" | "replay";
+  /** Frosted overlay on the app vs standalone full-screen (replay from settings). */
+  presentation?: "glass" | "fullscreen";
 };
 
-export default function FirstLaunchTutorial({ onComplete, mode = "onboarding" }: Props) {
+export default function FirstLaunchTutorial({
+  onComplete,
+  mode = "onboarding",
+  presentation = "fullscreen",
+}: Props) {
   const isReplay = mode === "replay";
+  const isGlass = presentation === "glass";
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
   const palette = useMemo(() => getSettingsPalette(colors, isDark), [colors, isDark]);
-  const styles = useMemo(() => createStyles(colors, palette), [colors, palette]);
+  const styles = useMemo(
+    () => createStyles(colors, palette, isGlass, isDark),
+    [colors, palette, isGlass, isDark]
+  );
 
   const listRef = useRef<FlatList<TutorialSlide>>(null);
   const [page, setPage] = useState(0);
@@ -49,8 +60,10 @@ export default function FirstLaunchTutorial({ onComplete, mode = "onboarding" }:
     }
     await markOnboardingDone();
     onComplete();
-    router.replace("/chat");
-  }, [isReplay, onComplete, router]);
+    if (!isGlass) {
+      router.replace("/chat");
+    }
+  }, [isGlass, isReplay, onComplete, router]);
 
   const scrollToPage = useCallback((index: number) => {
     const clamped = Math.max(0, Math.min(index, SLIDES.length - 1));
@@ -67,11 +80,12 @@ export default function FirstLaunchTutorial({ onComplete, mode = "onboarding" }:
   };
 
   const goBack = () => {
-    if (page === 0) {
-      void finish();
-      return;
-    }
+    if (page === 0) return;
     scrollToPage(page - 1);
+  };
+
+  const skipTutorial = () => {
+    void finish();
   };
 
   const onScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -132,32 +146,56 @@ export default function FirstLaunchTutorial({ onComplete, mode = "onboarding" }:
   const dotFadeTop = insets.top + 80;
   const dotFadeBottom = insets.bottom + 200;
 
-  return (
-    <View style={styles.root}>
-      <View style={styles.dotBgLayer} pointerEvents="none">
-        <DotGridBackground mood={0.5} fadeTop={dotFadeTop} fadeBottom={dotFadeBottom} active />
-        <View
-          style={[styles.dotTopCap, { height: dotFadeTop, backgroundColor: colors.bg }]}
-        />
-      </View>
+  const body = (
+    <>
+      {!isGlass ? (
+        <View style={styles.dotBgLayer} pointerEvents="none">
+          <DotGridBackground mood={0.5} fadeTop={dotFadeTop} fadeBottom={dotFadeBottom} active />
+          <View
+            style={[styles.dotTopCap, { height: dotFadeTop, backgroundColor: colors.bg }]}
+          />
+        </View>
+      ) : null}
 
       <View style={[styles.topNav, { paddingTop: insets.top + 8 }]}>
-        {currentSlide.section ? (
-          <Text style={styles.topNavSection}>{currentSlide.section}</Text>
-        ) : null}
-        <Text style={styles.topNavTitle} numberOfLines={2}>
-          {currentSlide.title}
-        </Text>
+        <View style={styles.topNavHeader}>
+          <View style={styles.topNavHeaderSide} />
+          <View style={styles.topNavHeaderCenter}>
+            {currentSlide.section ? (
+              <Text style={styles.topNavSection}>{currentSlide.section}</Text>
+            ) : null}
+            <Text style={styles.topNavTitle} numberOfLines={2}>
+              {currentSlide.title}
+            </Text>
+          </View>
+          <View style={styles.topNavHeaderSide}>
+            {!isLast ? (
+              <Pressable
+                onPress={skipTutorial}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel="Skip tutorial"
+                style={({ pressed }) => [styles.skipBtn, pressed && styles.skipBtnPressed]}
+              >
+                <Text style={styles.skipText}>Skip</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
         <View style={styles.topNavControls}>
-          <Pressable
-            onPress={goBack}
-            hitSlop={10}
-            accessibilityRole="button"
-            accessibilityLabel={page === 0 ? "Skip tutorial" : "Previous slide"}
-            style={({ pressed }) => [styles.navArrow, pressed && styles.navArrowPressed]}
-          >
-            <Ionicons name="chevron-back" size={24} color={palette.primaryLight} />
-          </Pressable>
+          {page > 0 ? (
+            <Pressable
+              onPress={goBack}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Previous slide"
+              style={({ pressed }) => [styles.navArrow, pressed && styles.navArrowPressed]}
+            >
+              <Ionicons name="chevron-back" size={24} color={palette.primaryLight} />
+            </Pressable>
+          ) : (
+            <View style={styles.navArrow} />
+          )}
 
           <View style={styles.dotsTrack}>
             {SLIDES.map((_, i) => (
@@ -204,13 +242,42 @@ export default function FirstLaunchTutorial({ onComplete, mode = "onboarding" }:
         })}
         keyboardShouldPersistTaps="handled"
       />
-    </View>
+    </>
   );
+
+  if (isGlass) {
+    return (
+      <View style={styles.glassRoot}>
+        <TransparentSheet style={styles.glassSheet}>{body}</TransparentSheet>
+      </View>
+    );
+  }
+
+  return <View style={styles.root}>{body}</View>;
 }
 
-function createStyles(colors: ThemeColors, palette: ThemeColors) {
+function createStyles(
+  colors: ThemeColors,
+  palette: ThemeColors,
+  isGlass: boolean,
+  isDark: boolean
+) {
+  const panelBg = isGlass ? "transparent" : colors.bg;
+  const noteBg = isGlass
+    ? isDark
+      ? "rgba(0, 0, 0, 0.14)"
+      : "rgba(255, 255, 255, 0.22)"
+    : colors.bg;
+
   return StyleSheet.create({
     root: { flex: 1, backgroundColor: colors.bg },
+    glassRoot: {
+      ...StyleSheet.absoluteFillObject,
+      zIndex: 150,
+    },
+    glassSheet: {
+      flex: 1,
+    },
     dotBgLayer: {
       ...StyleSheet.absoluteFillObject,
       zIndex: 0,
@@ -222,12 +289,38 @@ function createStyles(colors: ThemeColors, palette: ThemeColors) {
       right: 0,
     },
     topNav: {
-      alignItems: "center",
       paddingHorizontal: 20,
       paddingBottom: 12,
       zIndex: 2,
+      gap: 8,
+      backgroundColor: panelBg,
+    },
+    topNavHeader: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+    },
+    topNavHeaderSide: {
+      width: 56,
+      minHeight: 28,
+      justifyContent: "center",
+    },
+    topNavHeaderCenter: {
+      flex: 1,
+      alignItems: "center",
       gap: 2,
-      backgroundColor: colors.bg,
+    },
+    skipBtn: {
+      alignSelf: "flex-end",
+      paddingVertical: 4,
+      paddingHorizontal: 2,
+    },
+    skipBtnPressed: {
+      opacity: 0.55,
+    },
+    skipText: {
+      color: colors.textDim,
+      fontSize: 15,
+      fontWeight: "600",
     },
     topNavSection: {
       color: colors.textDim,
@@ -301,7 +394,7 @@ function createStyles(colors: ThemeColors, palette: ThemeColors) {
       paddingHorizontal: 16,
       paddingTop: 10,
       paddingBottom: 0,
-      backgroundColor: colors.bg,
+      backgroundColor: panelBg,
       overflow: "visible",
     },
     guideDockEmergeClip: {
@@ -312,7 +405,7 @@ function createStyles(colors: ThemeColors, palette: ThemeColors) {
       paddingTop: 14,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: colors.border,
-      backgroundColor: colors.bg,
+      backgroundColor: noteBg,
     },
     illustrationWrap: {
       marginTop: 4,

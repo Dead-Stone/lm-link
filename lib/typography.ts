@@ -8,6 +8,8 @@ export const AppFonts = {
   /** LM Studio–style UI sans for the app title. */
   brandTitle: "Inter_700Bold",
   brandSubtitle: "Inter_500Medium",
+  /** Opening splash — slightly wider geometric wordmark. */
+  openingBrand: "PlusJakartaSans_700Bold",
   /** “for Android” — Roboto matches platform branding. */
   androidBrand: "Roboto_500Medium",
   /** Caveat script — MMS signature on signedbymms.vercel.app. */

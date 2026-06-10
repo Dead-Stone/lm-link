@@ -52,6 +52,24 @@ export function extractFileSizeLabel(
   return null;
 }
 
+/** Rough Q4_K_M on-disk size from a parameter label (7B, 270M, …). */
+export function estimateDownloadSizeFromParams(paramLabel: string): string | null {
+  const match = paramLabel.trim().match(/^(\d+(?:\.\d+)?)\s*([BM])$/i);
+  if (!match) return null;
+
+  const value = parseFloat(match[1]);
+  const unit = match[2].toUpperCase();
+  if (!Number.isFinite(value) || value <= 0) return null;
+
+  const bytes =
+    unit === "M"
+      ? value * 2.05 * 1_048_576
+      : value * 0.62 * 1_073_741_824;
+
+  const formatted = formatFileSize(bytes);
+  return formatted ? `~${formatted}` : null;
+}
+
 export function resolveFileSizeLabel(
   ...sources: (string | number | null | undefined)[]
 ): string | null {

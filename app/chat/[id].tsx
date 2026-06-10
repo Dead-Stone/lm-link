@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { BlurView } from "expo-blur";
 import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
 import * as Haptics from "expo-haptics";
@@ -23,14 +24,12 @@ import MaskedView from "@react-native-masked-view/masked-view";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import BrandLogo from "../../components/BrandLogo";
 import ChatHeader from "../../components/chat/ChatHeader";
-import ChatSwipeNavigator from "../../components/ChatSwipeNavigator";
+import { useHubNavigation } from "../../lib/hub-navigation";
 import ChatMessagesList from "../../components/chat/ChatMessagesList";
-import ChatImageFrame from "../../components/ChatImageFrame";
 import DotGridBackground from "../../components/DotGridBackground";
 import ChatModelPicker from "../../components/ChatModelPicker";
 import ModelModeBadgeIcon from "../../components/ModelModeBadgeIcon";
 import { ModelCapabilityIcons } from "../../components/ModelCapabilityIcons";
-import { SpeedStatRow } from "../../components/ModelPicker";
 import ThemedError from "../../components/ThemedError";
 import { buildOnDeviceChatMessages } from "../../lib/chat-request";
 import {
@@ -47,7 +46,6 @@ import {
   resolveImageBase64,
 } from "../../lib/image-attachments";
 import { isSameModelId } from "../../lib/model-id";
-import { createModalTheme } from "../../lib/modal-theme";
 import { useConversations, useSettings } from "../../lib/context";
 import { useAppError } from "../../lib/error-context";
 import {
@@ -58,7 +56,9 @@ import {
   isModelDownloaded,
   LOCAL_MODEL_CATALOG,
   LocalModelInfo,
+  localModelModalities,
   localModelSupportsThinking,
+  localModelSupportsVideo,
   localModelSupportsVision,
   OnDeviceLLMState,
   useOnDeviceLLM,
@@ -69,6 +69,7 @@ import { createScreenHeaderTitleStyle } from "../../lib/typography";
 import { ChatColors, getSettingsPalette, ThemeColors, useTheme } from "../../lib/theme";
 import {
   composerDockBottom,
+  footerBottomPadding,
   useKeyboardInset,
 } from "../../lib/use-keyboard-inset";
 import {
@@ -85,6 +86,8 @@ import {
   modelHasVisionCapability,
   modelSupportsThinking,
   modelSupportsVision,
+  ModelModality,
+  resolveModelModalities,
   selectVisionModelMessage,
   visionRequiredMessage,
 } from "../../lib/vision-models";
@@ -101,10 +104,262 @@ interface Attachment {
   mimeType?: string;
 }
 
+const MAX_CHAT_ATTACHMENTS = 5;
+
+function attachmentLimitMessage(): string {
+  return `You can attach up to ${MAX_CHAT_ATTACHMENTS} files at a time. Remove one to add more.`;
+}
+
+function imageAssetToAttachment(
+  asset: ImagePicker.ImagePickerAsset,
+  index = 0
+): Attachment {
+  return {
+    id: generateId(),
+    type: "image",
+    uri: asset.uri,
+    name: asset.fileName ?? `image_${Date.now()}_${index}.jpg`,
+    size: asset.fileSize ?? undefined,
+    mimeType: normalizeImageMimeType(asset.mimeType),
+  };
+}
+
+function documentAssetToAttachment(asset: DocumentPicker.DocumentPickerAsset): Attachment {
+  return {
+    id: generateId(),
+    type: "document",
+    uri: asset.uri,
+    name: asset.name,
+    size: asset.size ?? undefined,
+    mimeType: asset.mimeType ?? undefined,
+  };
+}
+
+const composerBlurProps =
+  Platform.OS === "android"
+    ? ({ experimentalBlurMethod: "dimezisBlurView" } as const)
+    : {};
+
+const STAGE_TILE_SIZE = 64;
+const STAGE_STRIP_TOP_BLEED = 18;
+
+function themeBgWithAlpha(bg: string, alpha: number): string {
+  const hex = bg.replace("#", "");
+  if (hex.length !== 6) return bg;
+  const r = Number.parseInt(hex.slice(0, 2), 16);
+  const g = Number.parseInt(hex.slice(2, 4), 16);
+  const b = Number.parseInt(hex.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function ComposerFieldShell({
+  children,
+  isDark,
+}: {
+  children: React.ReactNode;
+  isDark: boolean;
+}) {
+  const frostedTint = isDark ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.38)";
+  const webFallback = isDark ? "rgba(28,28,30,0.72)" : "rgba(255,255,255,0.78)";
+
+  return (
+    <View style={composerFieldStyles.shell}>
+      {Platform.OS !== "web" ? (
+        <BlurView
+          intensity={isDark ? 34 : 42}
+          tint={isDark ? "dark" : "light"}
+          style={StyleSheet.absoluteFillObject}
+          {...composerBlurProps}
+        />
+      ) : (
+        <View style={[StyleSheet.absoluteFillObject, { backgroundColor: webFallback }]} />
+      )}
+      <View
+        pointerEvents="none"
+        style={[StyleSheet.absoluteFillObject, { backgroundColor: frostedTint }]}
+      />
+      <View style={composerFieldStyles.content}>{children}</View>
+    </View>
+  );
+}
+
+const composerFieldStyles = StyleSheet.create({
+  shell: {
+    flex: 1,
+    minWidth: 0,
+    zIndex: 1,
+    borderRadius: 20,
+    overflow: "hidden",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(128,128,128,0.22)",
+  },
+  content: {
+    minHeight: 40,
+    justifyContent: "center",
+  },
+});
+
+function AttachMenuPopover({
+  isDark,
+  colors,
+  onPhotoLibrary,
+  onCamera,
+  onDocument,
+  styles,
+}: {
+  isDark: boolean;
+  colors: ThemeColors;
+  onPhotoLibrary: () => void;
+  onCamera: () => void;
+  onDocument: () => void;
+  styles: ReturnType<typeof createMainChatStyles>;
+}) {
+  const frostedTint = isDark ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.42)";
+  const webFallback = isDark ? "rgba(28,28,30,0.92)" : "rgba(255,255,255,0.94)";
+
+  const item = (
+    icon: React.ComponentProps<typeof Ionicons>["name"],
+    label: string,
+    iconColor: string,
+    onPress: () => void,
+    showDivider: boolean
+  ) => (
+    <>
+      {showDivider ? <View style={styles.attachMenuDivider} /> : null}
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [
+          styles.attachMenuItem,
+          pressed && styles.attachMenuItemPressed,
+        ]}
+      >
+        <Ionicons name={icon} size={17} color={iconColor} />
+        <Text style={styles.attachMenuItemText}>{label}</Text>
+      </Pressable>
+    </>
+  );
+
+  return (
+    <View style={styles.attachMenuPopover}>
+      {Platform.OS !== "web" ? (
+        <BlurView
+          intensity={isDark ? 52 : 64}
+          tint={isDark ? "dark" : "light"}
+          style={StyleSheet.absoluteFillObject}
+          {...composerBlurProps}
+        />
+      ) : (
+        <View style={[StyleSheet.absoluteFillObject, { backgroundColor: webFallback }]} />
+      )}
+      <View
+        pointerEvents="none"
+        style={[StyleSheet.absoluteFillObject, { backgroundColor: frostedTint }]}
+      />
+      {item("images-outline", "Photo Library", colors.primaryLight, onPhotoLibrary, false)}
+      {item("camera-outline", "Take Photo", colors.lmInner, onCamera, true)}
+      {item("document-outline", "Document", colors.textMuted, onDocument, true)}
+    </View>
+  );
+}
+
 function formatAttachSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function attachmentFileExtension(name: string): string {
+  const segment = name.split(/[/\\]/).pop() ?? name;
+  const dot = segment.lastIndexOf(".");
+  if (dot <= 0 || dot === segment.length - 1) return "FILE";
+  return segment.slice(dot + 1).toUpperCase().slice(0, 6);
+}
+
+function fileExtensionAccent(ext: string, colors: ThemeColors): string {
+  switch (ext) {
+    case "PDF":
+      return "#ef4444";
+    case "DOC":
+    case "DOCX":
+      return "#3b82f6";
+    case "XLS":
+    case "XLSX":
+    case "CSV":
+      return "#22c55e";
+    case "JSON":
+    case "XML":
+      return "#f59e0b";
+    case "MD":
+    case "TXT":
+      return colors.textMuted;
+    default:
+      return colors.primaryLight;
+  }
+}
+
+function ComposerAttachmentsBar({
+  attachments,
+  onRemove,
+  colors,
+  styles,
+}: {
+  attachments: Attachment[];
+  onRemove: (id: string) => void;
+  colors: ThemeColors;
+  styles: ReturnType<typeof createMainChatStyles>;
+}) {
+  const footerBg = colors.bg;
+
+  return (
+    <View style={styles.attachmentsBar}>
+      <LinearGradient
+        pointerEvents="none"
+        colors={[themeBgWithAlpha(footerBg, 0), footerBg]}
+        locations={[0, 1]}
+        style={StyleSheet.absoluteFillObject}
+      />
+      <ScrollView
+        horizontal
+        style={styles.attachmentsBarScroll}
+        contentContainerStyle={styles.attachmentsBarContent}
+        showsHorizontalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        {attachments.map((att) => (
+          <View key={att.id} style={styles.stageTile}>
+            {att.type === "image" ? (
+              <Image source={{ uri: att.uri }} style={styles.stageTileImage} resizeMode="cover" />
+            ) : (
+              <View style={styles.stageFileTile}>
+                <Ionicons
+                  name="document-text-outline"
+                  size={20}
+                  color={fileExtensionAccent(attachmentFileExtension(att.name), colors)}
+                />
+                <Text
+                  style={[
+                    styles.stageFileExt,
+                    { color: fileExtensionAccent(attachmentFileExtension(att.name), colors) },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {attachmentFileExtension(att.name)}
+                </Text>
+              </View>
+            )}
+            <Pressable
+              style={styles.stageRemoveBtn}
+              onPress={() => onRemove(att.id)}
+              hitSlop={4}
+              accessibilityLabel="Remove attachment"
+            >
+              <Ionicons name="close" size={12} color="#fff" />
+            </Pressable>
+          </View>
+        ))}
+      </ScrollView>
+    </View>
+  );
 }
 
 // ─── On-device status bar ─────────────────────────────────────────────────────
@@ -517,13 +772,19 @@ const COMPOSER_DOCK_HEIGHT_ESTIMATE = 112;
 export default function ChatScreen() {
   const { id, localModel: localModelParam } = useLocalSearchParams<{ id: string; localModel?: string }>();
   const router = useRouter();
+  const { openConversations, openSettings, setGestureEnabled } = useHubNavigation();
   const [screenFocused, setScreenFocused] = useState(true);
   const insets = useSafeAreaInsets();
   const { keyboardHeight, composerLift } = useKeyboardInset();
   const composerBottom = composerDockBottom(insets.bottom, keyboardHeight, composerLift);
   const inputFooterBottom = 8;
+  const footerSolidStripHeight = footerBottomPadding(
+    insets.bottom,
+    keyboardHeight,
+    inputFooterBottom
+  );
   const [composerChromeHeight, setComposerChromeHeight] = useState(COMPOSER_DOCK_HEIGHT_ESTIMATE);
-  const listBottomInset = composerChromeHeight + 12;
+  const listBottomInset = composerChromeHeight + composerBottom;
   const emptyHeroBottomPad = composerChromeHeight + composerBottom;
   const { settings, updateSettings, account } = useSettings();
   const {
@@ -540,7 +801,6 @@ export default function ChatScreen() {
     () => createMainChatStyles(colors, chatColors, isDark),
     [colors, chatColors, isDark]
   );
-  const modalStyles = useMemo(() => createModalTheme(colors), [colors]);
 
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [input, setInput] = useState("");
@@ -811,6 +1071,15 @@ export default function ChatScreen() {
     });
   }, []);
 
+  const prevKeyboardHeightRef = useRef(0);
+  useEffect(() => {
+    const opened = keyboardHeight > 0 && prevKeyboardHeightRef.current === 0;
+    prevKeyboardHeightRef.current = keyboardHeight;
+    if (opened && conversationRef.current?.messages.some(isChatMessage)) {
+      scrollToBottom(true);
+    }
+  }, [keyboardHeight, scrollToBottom]);
+
   useFocusEffect(
     useCallback(() => {
       setScreenFocused(true);
@@ -948,8 +1217,20 @@ export default function ChatScreen() {
     [chatMode, localModelKey, remoteModelCatalog, settings, account?.token, updateConversation, updateSettings, scrollToBottom]
   );
 
+  const streamScrollRafRef = useRef<number | null>(null);
   useEffect(() => {
-    if (streamingContent) scrollToBottom();
+    if (!streamingContent) return;
+    if (streamScrollRafRef.current !== null) return;
+    streamScrollRafRef.current = requestAnimationFrame(() => {
+      streamScrollRafRef.current = null;
+      scrollToBottom(false);
+    });
+    return () => {
+      if (streamScrollRafRef.current !== null) {
+        cancelAnimationFrame(streamScrollRafRef.current);
+        streamScrollRafRef.current = null;
+      }
+    };
   }, [streamingContent, scrollToBottom]);
 
   const animateSend = useCallback(() => {
@@ -971,27 +1252,46 @@ export default function ChatScreen() {
     return null;
   }, [chatMode, remoteModelCatalog]);
 
-  const attachPickedImage = useCallback(
-    async (asset: ImagePicker.ImagePickerAsset) => {
+  const stagePickedAttachments = useCallback(
+    (incoming: Attachment[]) => {
+      if (incoming.length === 0) return;
+      let atCap = false;
+      let overflow = false;
+      setAttachments((prev) => {
+        const remaining = MAX_CHAT_ATTACHMENTS - prev.length;
+        if (remaining <= 0) {
+          atCap = true;
+          return prev;
+        }
+        const toAdd = incoming.slice(0, remaining);
+        overflow = incoming.length > remaining;
+        return [...prev, ...toAdd];
+      });
+      if (atCap) {
+        showError(attachmentLimitMessage(), { kind: "general" });
+      } else if (overflow) {
+        showError(
+          `Only ${MAX_CHAT_ATTACHMENTS} attachments allowed. Extra files were skipped.`,
+          { kind: "general" }
+        );
+      }
+    },
+    [showError]
+  );
+
+  const attachPickedImages = useCallback(
+    (assets: ImagePicker.ImagePickerAsset[]) => {
       const attachError = imageAttachmentError();
       if (attachError) {
         showError(attachError, { kind: "general" });
         return;
       }
-      setAttachments((prev) => [
-        ...prev,
-        {
-          id: generateId(),
-          type: "image",
-          uri: asset.uri,
-          name: asset.fileName ?? `image_${Date.now()}.jpg`,
-          size: asset.fileSize ?? undefined,
-          mimeType: normalizeImageMimeType(asset.mimeType),
-        },
-      ]);
+      stagePickedAttachments(assets.map((asset, index) => imageAssetToAttachment(asset, index)));
     },
-    [imageAttachmentError, showError]
+    [imageAttachmentError, showError, stagePickedAttachments]
   );
+
+  const remainingAttachmentSlots = MAX_CHAT_ATTACHMENTS - attachments.length;
 
   const pickFromLibrary = useCallback(async () => {
     setShowAttachMenu(false);
@@ -1000,26 +1300,41 @@ export default function ChatScreen() {
       showError(attachError, { kind: "general" });
       return;
     }
+    if (remainingAttachmentSlots <= 0) {
+      showError(attachmentLimitMessage(), { kind: "general" });
+      return;
+    }
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         quality: 0.7,
+        allowsMultipleSelection: true,
+        selectionLimit: remainingAttachmentSlots,
         preferredAssetRepresentationMode:
           ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
       });
-      if (!result.canceled && result.assets[0]) {
-        await attachPickedImage(result.assets[0]);
+      if (!result.canceled && result.assets.length > 0) {
+        attachPickedImages(result.assets);
       }
     } catch {
       showError("Could not read that image. Try another photo.");
     }
-  }, [attachPickedImage, imageAttachmentError, showError]);
+  }, [
+    attachPickedImages,
+    imageAttachmentError,
+    remainingAttachmentSlots,
+    showError,
+  ]);
 
   const pickFromCamera = useCallback(async () => {
     setShowAttachMenu(false);
     const attachError = imageAttachmentError();
     if (attachError) {
       showError(attachError, { kind: "general" });
+      return;
+    }
+    if (remainingAttachmentSlots <= 0) {
+      showError(attachmentLimitMessage(), { kind: "general" });
       return;
     }
     try {
@@ -1035,35 +1350,36 @@ export default function ChatScreen() {
         quality: 0.7,
       });
       if (!result.canceled && result.assets[0]) {
-        await attachPickedImage(result.assets[0]);
+        attachPickedImages([result.assets[0]]);
       }
     } catch {
       showError("Could not read that photo. Try again.");
     }
-  }, [attachPickedImage, imageAttachmentError, showError]);
+  }, [
+    attachPickedImages,
+    imageAttachmentError,
+    remainingAttachmentSlots,
+    showError,
+  ]);
 
   const pickDocument = useCallback(async () => {
     setShowAttachMenu(false);
+    if (remainingAttachmentSlots <= 0) {
+      showError(attachmentLimitMessage(), { kind: "general" });
+      return;
+    }
     try {
-      const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
-      if (!result.canceled && result.assets[0]) {
-        const asset = result.assets[0];
-        setAttachments((prev) => [
-          ...prev,
-          {
-            id: generateId(),
-            type: "document",
-            uri: asset.uri,
-            name: asset.name,
-            size: asset.size ?? undefined,
-            mimeType: asset.mimeType ?? undefined,
-          },
-        ]);
+      const result = await DocumentPicker.getDocumentAsync({
+        copyToCacheDirectory: true,
+        multiple: true,
+      });
+      if (!result.canceled && result.assets.length > 0) {
+        stagePickedAttachments(result.assets.map(documentAssetToAttachment));
       }
     } catch {
       showError("Could not open document picker.");
     }
-  }, [showError]);
+  }, [remainingAttachmentSlots, showError, stagePickedAttachments]);
 
   const removeAttachment = useCallback((attachId: string) => {
     setAttachments((prev) => prev.filter((a) => a.id !== attachId));
@@ -1150,15 +1466,13 @@ export default function ChatScreen() {
               setShowTypingIndicator(false);
               appendStreamingContent(token);
 
-              if (tokenCountRef.current % 10 === 0) {
-                const elapsed = now - streamStartRef.current;
-                const tps = elapsed > 0 ? tokenCountRef.current / (elapsed / 1000) : 0;
-                setLiveStats({
-                  tokensPerSec: tps,
-                  totalTokens: tokenCountRef.current,
-                  elapsedMs: elapsed,
-                });
-              }
+              const elapsed = now - streamStartRef.current;
+              const tps = elapsed > 0 ? tokenCountRef.current / (elapsed / 1000) : 0;
+              setLiveStats({
+                tokensPerSec: tps,
+                totalTokens: tokenCountRef.current,
+                elapsedMs: elapsed,
+              });
             },
             onDone: async (fullText) => {
               flushStreamingContent();
@@ -1310,17 +1624,13 @@ export default function ChatScreen() {
     [isStreaming, updateConversation, generateReplyForConversation]
   );
 
-  const openConversations = useCallback(() => {
-    router.push("/conversations");
-  }, [router]);
-
   const openNewChat = useCallback(() => {
     router.push("/chat/new");
   }, [router]);
 
-  const openSettings = useCallback(() => {
-    router.push("/settings");
-  }, [router]);
+  useEffect(() => {
+    setGestureEnabled(!showModelPicker && !showAttachMenu);
+  }, [setGestureEnabled, showModelPicker, showAttachMenu]);
 
   // ─── Send message ──────────────────────────────────────────────────────────
 
@@ -1488,19 +1798,34 @@ export default function ChatScreen() {
   const hasActiveModel =
     chatMode === "remote" ? !!conversation?.model?.trim() : !!localModelKey;
 
-  const activeModelCapabilities = useMemo(() => {
+  const activeModelCapabilities = useMemo((): {
+    thinking: boolean;
+    vision: boolean;
+    video: boolean;
+    modalities: ModelModality[];
+  } => {
     if (chatMode === "local") {
-      if (!localModelInfo) return { thinking: false, vision: false };
+      if (!localModelInfo) {
+        return { thinking: false, vision: false, video: false, modalities: ["text"] };
+      }
+      const modalities = localModelModalities(localModelInfo);
       return {
         thinking: localModelSupportsThinking(localModelInfo),
         vision: localModelSupportsVision(localModelInfo),
+        video: localModelSupportsVideo(localModelInfo),
+        modalities,
       };
     }
     const modelId = conversation?.model?.trim() ?? "";
-    if (!modelId) return { thinking: false, vision: false };
+    if (!modelId) {
+      return { thinking: false, vision: false, video: false, modalities: ["text"] };
+    }
+    const modalities = resolveModelModalities(modelId, remoteModelCatalog);
     return {
       thinking: modelSupportsThinking(modelId, remoteModelCatalog),
       vision: modelHasVisionCapability(modelId, remoteModelCatalog),
+      video: modalities.includes("video"),
+      modalities,
     };
   }, [chatMode, localModelInfo, conversation?.model, remoteModelCatalog]);
 
@@ -1525,13 +1850,25 @@ export default function ChatScreen() {
     return last.role === "user" ? 0.36 : 0.58;
   }, [isStreaming, showTypingIndicator, hasInput, messages]);
 
-  const liveStatsLabel = liveStats
-    ? `${liveStats.tokensPerSec.toFixed(1)} tok/s  •  ${liveStats.totalTokens} tokens  •  ${(liveStats.elapsedMs / 1000).toFixed(1)}s`
-    : null;
-  const onDeviceStatsLabel =
-    chatMode === "local" && onDeviceLLM.isGenerating && onDeviceLLM.tokensPerSec > 0
-      ? `${onDeviceLLM.tokensPerSec.toFixed(1)} tok/s (on-device)`
-      : null;
+  const streamingStats = useMemo(() => {
+    if (!isStreaming) return null;
+    if (liveStats) return liveStats;
+    if (chatMode === "local" && onDeviceLLM.isGenerating) {
+      return {
+        tokensPerSec: onDeviceLLM.tokensPerSec,
+        totalTokens: onDeviceLLM.contextTokens,
+        elapsedMs: 0,
+      };
+    }
+    return { tokensPerSec: 0, totalTokens: 0, elapsedMs: 0 };
+  }, [
+    isStreaming,
+    liveStats,
+    chatMode,
+    onDeviceLLM.isGenerating,
+    onDeviceLLM.tokensPerSec,
+    onDeviceLLM.contextTokens,
+  ]);
 
   const systemBadgeRevealStyle = useMemo(
     () => ({
@@ -1577,12 +1914,6 @@ export default function ChatScreen() {
           ]}
         />
       </View>
-      <ChatSwipeNavigator
-        style={{ flex: 1 }}
-        enabled={!showModelPicker && !showAttachMenu}
-        onSwipeLeft={openSettings}
-        onSwipeRight={openConversations}
-      >
       <ChatHeader
         title={conversation?.title || "New Chat"}
         paddingTop={insets.top}
@@ -1619,6 +1950,14 @@ export default function ChatScreen() {
       )}
 
       <View style={styles.chatBody}>
+        {showAttachMenu ? (
+          <Pressable
+            style={styles.attachMenuScrim}
+            onPress={() => setShowAttachMenu(false)}
+            accessibilityLabel="Dismiss attachment menu"
+          />
+        ) : null}
+
         {/* Messages / empty state */}
         {showEmptyHero ? (
           <View style={{ flex: 1, paddingBottom: emptyHeroBottomPad }}>
@@ -1638,7 +1977,7 @@ export default function ChatScreen() {
             messages={messages}
             streamingContent={streamingContent}
             showTypingIndicator={showTypingIndicator}
-            liveStats={liveStats}
+            streamingStats={streamingStats}
             bottomInset={listBottomInset}
             onRetryUser={handleRetryUserMessage}
             onRetryAssistant={handleRetryAssistantMessage}
@@ -1653,7 +1992,11 @@ export default function ChatScreen() {
         />
 
         <View
-          style={[styles.composerDock, { bottom: composerBottom }]}
+          style={[
+            styles.composerDock,
+            { bottom: composerBottom },
+            showAttachMenu && styles.composerDockFront,
+          ]}
           onLayout={(event) => {
             const next = event.nativeEvent.layout.height;
             if (next > 0) setComposerChromeHeight(next);
@@ -1666,73 +2009,63 @@ export default function ChatScreen() {
           onDismiss={() => setError(null)}
         />
 
-        {/* Live stats bar — only shown during active streaming */}
-        {isStreaming && (liveStatsLabel || onDeviceStatsLabel) ? (
-          <View style={styles.statsBar} pointerEvents="none">
-            <SpeedStatRow
-              text={liveStatsLabel ?? onDeviceStatsLabel ?? ""}
-              colors={colors}
-              textStyle={styles.statsBarText}
-            />
-          </View>
-        ) : null}
-
-        {/* Attachment previews */}
-        {attachments.length > 0 && (
-          <ScrollView
-            horizontal
-            style={styles.attachPreviewRow}
-            contentContainerStyle={styles.attachPreviewContent}
-            showsHorizontalScrollIndicator={false}
-          >
-            {attachments.map((att) => (
-              <View key={att.id} style={styles.attachPreviewItem}>
-                {att.type === "image" ? (
-                  <>
-                    <ChatImageFrame
-                      uri={att.uri}
-                      width={80}
-                      height={80}
-                      borderRadius={12}
-                    />
-                    <Pressable
-                      style={styles.attachRemoveBtn}
-                      onPress={() => removeAttachment(att.id)}
-                      hitSlop={4}
-                    >
-                      <Ionicons name="close-circle" size={18} color="#f87171" />
-                    </Pressable>
-                  </>
-                ) : (
-                  <View style={styles.attachDocChip}>
-                    <Ionicons name="document-outline" size={15} color="#888" />
-                    <Text style={styles.attachDocName} numberOfLines={1}>{att.name}</Text>
-                    {att.size !== undefined && (
-                      <Text style={styles.attachDocSize}>{formatAttachSize(att.size)}</Text>
-                    )}
-                    <Pressable onPress={() => removeAttachment(att.id)} hitSlop={6}>
-                      <Ionicons name="close" size={14} color="#555" />
-                    </Pressable>
-                  </View>
-                )}
-              </View>
-            ))}
-          </ScrollView>
-        )}
-
         {/* Input bar */}
-        <View style={[styles.inputFooter, { paddingBottom: inputFooterBottom }]}>
-          <View style={styles.inputBar}>
+        <View
+          style={[
+            styles.inputFooter,
+            attachments.length > 0 && styles.inputFooterWithAttachments,
+          ]}
+        >
+          {attachments.length > 0 ? (
+            <ComposerAttachmentsBar
+              attachments={attachments}
+              onRemove={removeAttachment}
+              colors={colors}
+              styles={styles}
+            />
+          ) : null}
+          <View style={styles.inputBarSurface}>
+          <View style={[styles.inputBar, attachments.length > 0 && styles.inputBarWithAttachments]}>
             <View style={styles.inputRow}>
-              <Pressable
-                onPress={() => setShowAttachMenu(true)}
-                style={styles.attachBtn}
-                hitSlop={4}
-              >
-                <Ionicons name="add" size={22} color={chatColors.inputIcon} />
-              </Pressable>
+              <View style={styles.attachAnchor}>
+                <Pressable
+                  onPress={() => setShowAttachMenu((open) => !open)}
+                  style={({ pressed }) => [
+                    styles.attachBtn,
+                    showAttachMenu && styles.attachBtnOpen,
+                    !showAttachMenu && attachments.length > 0 && styles.attachBtnStaged,
+                    pressed && styles.attachBtnPressed,
+                  ]}
+                  hitSlop={4}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: showAttachMenu, expanded: showAttachMenu }}
+                  accessibilityLabel="Add attachment"
+                >
+                  <Ionicons
+                    name={showAttachMenu ? "close" : "add"}
+                    size={22}
+                    color={
+                      showAttachMenu
+                        ? chatColors.modelAccent
+                        : attachments.length > 0
+                          ? chatColors.modelAccent
+                          : chatColors.inputIcon
+                    }
+                  />
+                </Pressable>
+                {showAttachMenu ? (
+                  <AttachMenuPopover
+                    isDark={isDark}
+                    colors={colors}
+                    styles={styles}
+                    onPhotoLibrary={pickFromLibrary}
+                    onCamera={pickFromCamera}
+                    onDocument={pickDocument}
+                  />
+                ) : null}
+              </View>
 
-              <View style={styles.textInputWrap}>
+              <ComposerFieldShell isDark={isDark}>
                 <TextInput
                   value={input}
                   onChangeText={setInput}
@@ -1743,7 +2076,7 @@ export default function ChatScreen() {
                   returnKeyType="default"
                   blurOnSubmit={false}
                 />
-              </View>
+              </ComposerFieldShell>
 
               <Animated.View style={{ transform: [{ scale: sendScale }] }}>
                 {isStreaming ? (
@@ -1799,8 +2132,8 @@ export default function ChatScreen() {
                     style={styles.footerModelChevron}
                   />
                   <ModelCapabilityIcons
+                    modalities={activeModelCapabilities.modalities}
                     thinking={activeModelCapabilities.thinking}
-                    vision={activeModelCapabilities.vision}
                     colors={colors}
                     highlighted={hasActiveModel}
                     showUnsupported
@@ -1810,16 +2143,16 @@ export default function ChatScreen() {
               </Pressable>
               <View style={styles.poweredByRow}>
                 <Text style={styles.poweredByText}>Powered by</Text>
-                <BrandLogo size={11} flat />
+                <BrandLogo size={11} flat showLink={false} />
                 <Text style={styles.poweredByBrand}>LM Studio</Text>
               </View>
             </View>
+            <View style={[styles.footerSolidStrip, { height: footerSolidStripHeight }]} />
+          </View>
           </View>
         </View>
         </View>
       </View>
-      </ChatSwipeNavigator>
-
       <ChatModelPicker
         visible={showModelPicker}
         onClose={() => setShowModelPicker(false)}
@@ -1833,73 +2166,10 @@ export default function ChatScreen() {
         }}
         localModelKey={localModelKey}
         onLocalSelect={(key) => applyModelSelection("local", { localKey: key })}
-        onOpenSettings={() => router.push("/settings")}
+        onOpenSettings={openSettings}
         disableLocal={IS_EXPO_GO}
       />
 
-      {/* Attachment action sheet overlay */}
-      {showAttachMenu && (
-        <Pressable
-          style={modalStyles.sheetOverlay}
-          onPress={() => setShowAttachMenu(false)}
-        >
-          <View
-            style={[modalStyles.sheet, { paddingBottom: insets.bottom + 8 }]}
-            onStartShouldSetResponder={() => true}
-          >
-            <View style={modalStyles.sheetHandle} />
-            <View style={modalStyles.sheetGroup}>
-              <Pressable
-                style={({ pressed }) => [
-                  modalStyles.sheetItem,
-                  pressed && { backgroundColor: colors.surfaceHover },
-                ]}
-                onPress={pickFromLibrary}
-              >
-                <View style={modalStyles.sheetItemIcon}>
-                  <Ionicons name="images-outline" size={18} color={colors.primaryLight} />
-                </View>
-                <Text style={modalStyles.sheetItemText}>Photo Library</Text>
-                <Ionicons name="chevron-forward" size={15} color={colors.textDim} />
-              </Pressable>
-              <View style={modalStyles.sheetItemDivider} />
-              <Pressable
-                style={({ pressed }) => [
-                  modalStyles.sheetItem,
-                  pressed && { backgroundColor: colors.surfaceHover },
-                ]}
-                onPress={pickFromCamera}
-              >
-                <View style={modalStyles.sheetItemIcon}>
-                  <Ionicons name="camera-outline" size={18} color={colors.lmInner} />
-                </View>
-                <Text style={modalStyles.sheetItemText}>Take Photo</Text>
-                <Ionicons name="chevron-forward" size={15} color={colors.textDim} />
-              </Pressable>
-              <View style={modalStyles.sheetItemDivider} />
-              <Pressable
-                style={({ pressed }) => [
-                  modalStyles.sheetItem,
-                  pressed && { backgroundColor: colors.surfaceHover },
-                ]}
-                onPress={pickDocument}
-              >
-                <View style={modalStyles.sheetItemIcon}>
-                  <Ionicons name="document-outline" size={18} color={colors.textMuted} />
-                </View>
-                <Text style={modalStyles.sheetItemText}>Document</Text>
-                <Ionicons name="chevron-forward" size={15} color={colors.textDim} />
-              </Pressable>
-            </View>
-            <Pressable
-              style={modalStyles.sheetCancel}
-              onPress={() => setShowAttachMenu(false)}
-            >
-              <Text style={modalStyles.sheetCancelText}>Cancel</Text>
-            </Pressable>
-          </View>
-        </Pressable>
-      )}
     </View>
   );
 }
@@ -1907,6 +2177,8 @@ export default function ChatScreen() {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 function createMainChatStyles(colors: ThemeColors, chat: ChatColors, isDark: boolean) {
+  const footerChromeBg = isDark ? "#000000" : "#ffffff";
+
   return StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg, overflow: "hidden" },
   chatBody: { flex: 1, position: "relative" },
@@ -1923,7 +2195,15 @@ function createMainChatStyles(colors: ThemeColors, chat: ChatColors, isDark: boo
     left: 0,
     right: 0,
     zIndex: 10,
-    backgroundColor: colors.bg,
+    backgroundColor: "transparent",
+  },
+  composerDockFront: {
+    zIndex: 12,
+  },
+  attachMenuScrim: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 11,
+    backgroundColor: "transparent",
   },
   dotBgLayer: {
     ...StyleSheet.absoluteFillObject,
@@ -2006,59 +2286,72 @@ function createMainChatStyles(colors: ThemeColors, chat: ChatColors, isDark: boo
   errorLabel: { color: colors.error, fontSize: 11, fontWeight: "700", marginBottom: 3 },
   errorText: { color: colors.error, fontSize: 13, lineHeight: 18 },
 
-  statsBar: {
-    marginHorizontal: 16,
-    marginBottom: 6,
+  // ── Staged attachments (transparent top, solid composer bg at bottom) ─────
+  attachmentsBar: {
+    marginTop: -STAGE_STRIP_TOP_BLEED,
+    marginHorizontal: -12,
+    marginBottom: 0,
+    backgroundColor: "transparent",
+    overflow: "visible",
+  },
+  attachmentsBarScroll: {
+    maxHeight: STAGE_TILE_SIZE + STAGE_STRIP_TOP_BLEED + 10,
+  },
+  attachmentsBarContent: {
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: colors.statsBar,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
+    paddingTop: STAGE_STRIP_TOP_BLEED + 4,
+    paddingBottom: 6,
+    gap: 8,
+    alignItems: "center",
+  },
+  stageTile: {
+    width: STAGE_TILE_SIZE,
+    height: STAGE_TILE_SIZE,
+    borderRadius: 10,
+    overflow: "hidden",
+    backgroundColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.55)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: isDark ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0.65)",
+  },
+  stageTileImage: {
+    width: STAGE_TILE_SIZE,
+    height: STAGE_TILE_SIZE,
+  },
+  stageFileTile: {
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 4,
+    gap: 4,
   },
-  statsBarText: { color: colors.textMuted, fontSize: 12 },
-
-  // ── Attachment previews ────────────────────────────────────────────────────
-  attachPreviewRow: {
-    maxHeight: 100,
-    marginBottom: 6,
-    backgroundColor: "transparent",
+  stageFileExt: {
+    fontSize: 10,
+    lineHeight: 12,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+    textAlign: "center",
+    maxWidth: STAGE_TILE_SIZE - 8,
   },
-  attachPreviewContent: {
-    paddingHorizontal: 16,
-    paddingVertical: 4,
-    gap: 10,
-    alignItems: "center",
-  },
-  attachPreviewItem: {
-    position: "relative",
-  },
-  attachRemoveBtn: {
+  stageRemoveBtn: {
     position: "absolute",
-    top: -6,
-    right: -6,
-    backgroundColor: isDark ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.85)",
-    borderRadius: 9,
-  },
-  attachDocChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: colors.surface,
+    top: 4,
+    right: 4,
+    width: 20,
+    height: 20,
     borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    maxWidth: 220,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.48)",
   },
-  attachDocName: { color: colors.text, fontSize: 13, flex: 1 },
-  attachDocSize: { color: colors.textDim, fontSize: 11 },
 
   // ── Input bar ──────────────────────────────────────────────────────────────
   inputFooter: {
+    backgroundColor: colors.bg,
+  },
+  inputFooterWithAttachments: {
+    backgroundColor: "transparent",
+  },
+  inputBarSurface: {
     backgroundColor: colors.bg,
   },
   inputBar: {
@@ -2066,9 +2359,12 @@ function createMainChatStyles(colors: ThemeColors, chat: ChatColors, isDark: boo
     paddingTop: 8,
     paddingBottom: 2,
   },
+  inputBarWithAttachments: {
+    paddingTop: 0,
+  },
   inputRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "flex-end",
     gap: 8,
     marginBottom: 10,
   },
@@ -2079,7 +2375,13 @@ function createMainChatStyles(colors: ThemeColors, chat: ChatColors, isDark: boo
     gap: 10,
     minWidth: 0,
     minHeight: 20,
-    paddingBottom: 2,
+    paddingTop: 2,
+    paddingBottom: 8,
+    backgroundColor: footerChromeBg,
+  },
+  footerSolidStrip: {
+    marginHorizontal: -12,
+    backgroundColor: footerChromeBg,
   },
   footerModelPicker: {
     flexDirection: "row",
@@ -2127,6 +2429,12 @@ function createMainChatStyles(colors: ThemeColors, chat: ChatColors, isDark: boo
     fontWeight: "500",
     letterSpacing: 0.1,
   },
+  attachAnchor: {
+    position: "relative",
+    zIndex: 4,
+    elevation: 8,
+    flexShrink: 0,
+  },
   attachBtn: {
     width: 40,
     height: 40,
@@ -2134,25 +2442,69 @@ function createMainChatStyles(colors: ThemeColors, chat: ChatColors, isDark: boo
     justifyContent: "center",
     borderRadius: 20,
     backgroundColor: chat.inputBg,
-    flexShrink: 0,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "transparent",
   },
-  textInputWrap: {
-    flex: 1,
-    minWidth: 0,
-    backgroundColor: chat.inputBg,
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    minHeight: 40,
-    maxHeight: 88,
-    justifyContent: "center",
+  attachBtnOpen: {
+    backgroundColor: colors.bgElevated,
+    borderColor: isDark ? colors.primaryBorder : "rgba(139,92,246,0.35)",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: isDark ? 0.35 : 0.14,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  attachBtnStaged: {
+    borderColor: isDark ? colors.primaryBorder : "rgba(139,92,246,0.22)",
+  },
+  attachBtnPressed: {
+    opacity: 0.78,
+    transform: [{ scale: 0.96 }],
+  },
+  attachMenuPopover: {
+    position: "absolute",
+    left: 0,
+    bottom: 48,
+    width: 188,
+    borderRadius: 14,
+    overflow: "hidden",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.08)",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: isDark ? 0.42 : 0.16,
+    shadowRadius: 18,
+    elevation: 12,
+    zIndex: 6,
+  },
+  attachMenuItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  attachMenuItemPressed: {
+    backgroundColor: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)",
+  },
+  attachMenuItemText: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "600",
+    letterSpacing: -0.1,
+  },
+  attachMenuDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.07)",
+    marginHorizontal: 10,
   },
   textInput: {
     color: chat.inputText,
     fontSize: 15,
     lineHeight: 20,
     maxHeight: 64,
-    paddingVertical: 0,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
   },
   sendBtn: {
     width: 40,

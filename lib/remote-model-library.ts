@@ -1,4 +1,17 @@
-import { parseModelName } from "./model-name";
+import { normalizeModelKey } from "./model-id";
+import { extractModelParamLabel, parseModelName } from "./model-name";
+import { estimateDownloadSizeFromParams, resolveFileSizeLabel } from "./model-size";
+
+export { normalizeModelKey } from "./model-id";
+import {
+  ModelCapabilityFilter,
+  modelMatchesCapabilityFilter,
+  remoteLibraryEntryHaystack,
+} from "./vision-models";
+
+export const QUICK_ACCESS_LIMIT = 10;
+
+export type LibraryDownloadSource = "lmstudio" | "huggingface";
 
 export interface RemoteLibraryEntry {
   id: string;
@@ -10,6 +23,9 @@ export interface RemoteLibraryEntry {
   badge?: string;
   badgeColor: string;
   description?: string;
+  /** Popularity metric — LM Studio hub when available, else Hugging Face. */
+  downloads?: number;
+  downloadSource?: LibraryDownloadSource;
 }
 
 /**
@@ -119,7 +135,7 @@ export const REMOTE_MODEL_LIBRARY: RemoteLibraryEntry[] = [
   },
 ];
 
-/** Curated Mac/PC picks for Quick download (chat picker + model library). */
+/** Curated Mac/PC picks for Quick download when capability filter is All. */
 export const QUICK_ACCESS_REMOTE_MODEL_IDS = [
   "google/gemma-3-270m",
   "google/gemma-3-1b",
@@ -133,9 +149,61 @@ export const QUICK_ACCESS_REMOTE_MODEL_IDS = [
   "openai/gpt-oss-20b",
 ] as const;
 
-export function normalizeModelKey(id: string): string {
-  return id.toLowerCase().replace(/@.*$/, "").replace(/\.gguf$/i, "");
-}
+/** LM Studio catalog ids for Quick download, grouped by capability (chat picker). */
+export const QUICK_ACCESS_REMOTE_BY_CAPABILITY: Record<
+  ModelCapabilityFilter,
+  readonly string[]
+> = {
+  all: QUICK_ACCESS_REMOTE_MODEL_IDS,
+  text: [
+    "google/gemma-3-270m",
+    "google/gemma-3-1b",
+    "qwen/qwen3-1.7b",
+    "qwen/qwen3-0.6b",
+    "ibm/granite-4-micro",
+    "qwen/qwen3-4b-2507",
+    "meta-llama/llama-3.2-1b-instruct",
+    "meta-llama/llama-3.2-3b-instruct",
+    "mistralai/mistral-7b-instruct-v0.3",
+    "microsoft/phi-4",
+  ],
+  image: [
+    "google/gemma-3n-e4b",
+    "google/gemma-3n-e2b",
+    "qwen/qwen2.5-vl-3b-instruct",
+    "qwen/qwen2.5-vl-7b-instruct",
+    "qwen/qwen3-vl-4b",
+    "microsoft/phi-3.5-vision-instruct",
+    "microsoft/phi-4-multimodal-instruct",
+    "mistralai/pixtral-12b",
+    "moonshotai/moondream2",
+    "llava-hf/llava-1.5-7b-hf",
+  ],
+  video: [
+    "nvidia/nemotron-3-nano-omni",
+    "nvidia/nemotron-3-nano-12b-v2-vl",
+    "qwen/qwen3-omni-30b-a3b",
+    "google/gemma-3n-e4b",
+    "qwen/qwen2.5-vl-7b-instruct",
+    "microsoft/phi-4-multimodal-instruct",
+    "mistralai/pixtral-12b",
+    "qwen/qwen3-vl-4b",
+    "moonshotai/moondream2",
+    "llava-hf/llava-1.5-7b-hf",
+  ],
+  thinking: [
+    "deepseek/deepseek-r1-distill-qwen-7b",
+    "deepseek/deepseek-r1-distill-qwen-1.5b",
+    "deepseek/deepseek-r1-distill-llama-8b",
+    "qwen/qwq-1.5b",
+    "qwen/qwq-32b-preview",
+    "microsoft/phi-4-reasoning-plus",
+    "openai/gpt-oss-20b",
+    "qwen/qwen3-4b-2507",
+    "nousresearch/deephermes-3-llama-3-8b-preview",
+    "ibm/granite-3-2-8b-instruct-reasoning",
+  ],
+};
 
 export function findCuratedRemoteLibraryEntry(
   id: string
@@ -144,7 +212,82 @@ export function findCuratedRemoteLibraryEntry(
   return REMOTE_MODEL_LIBRARY.find((item) => normalizeModelKey(item.id) === key);
 }
 
+function publisherBadgeColor(publisher: string): string {
+  const key = publisher.toLowerCase();
+  if (key.includes("google")) return "#4285f4";
+  if (key.includes("qwen")) return "#06b6d4";
+  if (key.includes("meta") || key.includes("llama")) return "#0866ff";
+  if (key.includes("mistral")) return "#f59e0b";
+  if (key.includes("microsoft") || key.includes("phi")) return "#2563eb";
+  if (key.includes("deepseek")) return "#10b981";
+  if (key.includes("openai")) return "#22c55e";
+  if (key.includes("ibm")) return "#6366f1";
+  if (key.includes("nvidia")) return "#76b900";
+  return "#8b5cf6";
+}
+
+function remoteQuickEntryFromId(id: string): RemoteLibraryEntry {
+  const curated = findCuratedRemoteLibraryEntry(id);
+  if (curated) return curated;
+
+  const { displayName, family } = parseModelName(id);
+  const org = id.split("/")[0] ?? "";
+  const publisher = org
+    ? org.charAt(0).toUpperCase() + org.slice(1).replace(/-/g, " ")
+    : "LM Studio";
+  const params = extractModelParamLabel(id, displayName);
+
+  return {
+    id,
+    name: displayName || family,
+    publisher,
+    params: params ?? undefined,
+    badgeColor: publisherBadgeColor(publisher),
+    downloadSource: "lmstudio",
+  };
+}
+
+function quickAccessEntryMatches(
+  entry: RemoteLibraryEntry,
+  capability: ModelCapabilityFilter
+): boolean {
+  if (capability === "all") return true;
+  return modelMatchesCapabilityFilter(
+    entry.id,
+    capability,
+    [],
+    undefined,
+    entry.badge,
+    remoteLibraryEntryHaystack(entry)
+  );
+}
+
 /** Title for library/download rows — curated names first, then parsed id (matches model picker). */
+/** Download / on-disk size for library rows — known labels, parsed ids, then param estimate. */
+export function resolveRemoteLibrarySizeLabel(
+  entry: Pick<RemoteLibraryEntry, "id" | "name" | "sizeLabel" | "params" | "description">
+): string | null {
+  const curated = findCuratedRemoteLibraryEntry(entry.id);
+  const resolved = resolveFileSizeLabel(
+    entry.sizeLabel,
+    curated?.sizeLabel,
+    entry.id,
+    entry.name,
+    entry.description
+  );
+  if (resolved) return resolved;
+
+  const param =
+    entry.params ??
+    curated?.params ??
+    extractModelParamLabel(entry.id, entry.name, entry.params) ??
+    null;
+  if (!param) return null;
+
+  const estimate = estimateDownloadSizeFromParams(param);
+  return estimate ? estimate.replace(/^~\s*/, "") : null;
+}
+
 export function resolveRemoteLibraryDisplayName(
   entry: Pick<RemoteLibraryEntry, "id" | "name">
 ): string {
@@ -167,14 +310,32 @@ export function isModelInstalled(installedIds: string[], libraryId: string): boo
   });
 }
 
-export function getQuickAccessRemoteLibrary(installedIds: string[]): RemoteLibraryEntry[] {
+export function getQuickAccessRemoteLibrary(
+  installedIds: string[],
+  capability: ModelCapabilityFilter = "all",
+  limit = QUICK_ACCESS_LIMIT
+): RemoteLibraryEntry[] {
+  const primary = QUICK_ACCESS_REMOTE_BY_CAPABILITY[capability];
+  const pool = [
+    ...primary,
+    ...REMOTE_MODEL_LIBRARY.map((entry) => entry.id),
+    ...QUICK_ACCESS_REMOTE_BY_CAPABILITY.all,
+  ];
+
+  const seen = new Set<string>();
   const entries: RemoteLibraryEntry[] = [];
-  for (const id of QUICK_ACCESS_REMOTE_MODEL_IDS) {
-    const entry = REMOTE_MODEL_LIBRARY.find(
-      (item) => normalizeModelKey(item.id) === normalizeModelKey(id)
-    );
-    if (!entry || isModelInstalled(installedIds, entry.id)) continue;
+
+  for (const id of pool) {
+    if (entries.length >= limit) break;
+    const key = normalizeModelKey(id);
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const entry = remoteQuickEntryFromId(id);
+    if (isModelInstalled(installedIds, entry.id)) continue;
+    if (!quickAccessEntryMatches(entry, capability)) continue;
     entries.push(entry);
   }
+
   return entries;
 }

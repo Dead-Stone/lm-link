@@ -23,6 +23,10 @@ import {
   getQuickAccessLocalModels,
   isModelDownloaded,
 } from "../lib/local-models";
+import {
+  ModelCapabilityFilter,
+  modelMatchesCapabilityFilter,
+} from "../lib/vision-models";
 import { resolveManagementBaseUrl } from "../lib/api";
 import { useApp } from "../lib/context";
 import { platformRemoteLabel, platformShellIcon, resolveModelPlatform } from "../lib/model-platform";
@@ -36,6 +40,7 @@ import { getLocalModelStatItems } from "./LocalModelsSection";
 import { AnimatedLibraryRow } from "./LibraryModelSections";
 import {
   LibraryCatalogRow,
+  ModelModalityFilters,
   ModelStatLine,
   ModelTraitBadge,
   RemoteModelList,
@@ -126,11 +131,12 @@ function LocalModelRow({
         <View style={styles.localIcon}>
           <ModelModeBadgeIcon
             platform="phone"
+            modelId={model.downloadUrl}
             provider={model.provider}
             label={model.name}
-            size={22}
+            size={26}
             color={isSelected ? colors.primaryLight : colors.textMuted}
-            monochrome
+            monochrome={!isSelected}
           />
         </View>
         <View style={styles.localBody}>
@@ -143,7 +149,7 @@ function LocalModelRow({
             </Text>
             <ModelTraitBadge
               trait={{ label: model.badge, color: model.badgeColor }}
-              muted
+              muted={!isSelected}
               colors={colors}
             />
           </View>
@@ -151,7 +157,7 @@ function LocalModelRow({
             items={detailItems}
             colors={colors}
             textStyle={styles.localStats}
-            muted
+            muted={!isSelected}
           />
         </View>
       </ModelRowActionMute>
@@ -185,6 +191,8 @@ function LocalModelPanel({
   selectError,
   onDismissSelectError,
   onActionComplete,
+  capabilityFilter,
+  onCapabilityFilterChange,
   styles,
   colors,
   bottomInset,
@@ -197,6 +205,8 @@ function LocalModelPanel({
   selectError?: string | null;
   onDismissSelectError?: () => void;
   onActionComplete?: () => void;
+  capabilityFilter: ModelCapabilityFilter;
+  onCapabilityFilterChange: (filter: ModelCapabilityFilter) => void;
   styles: ReturnType<typeof createStyles>;
   colors: ThemeColors;
   bottomInset: number;
@@ -204,23 +214,41 @@ function LocalModelPanel({
   const [ejectingKey, setEjectingKey] = useState<string | null>(null);
   const [loadingKey, setLoadingKey] = useState<string | null>(null);
 
+  const matchesCapability = useCallback(
+    (model: LocalModelInfo) => {
+      const haystack = [model.key, model.name, model.provider, model.description, model.badge]
+        .filter(Boolean)
+        .join(" ");
+      return modelMatchesCapabilityFilter(
+        haystack,
+        capabilityFilter,
+        [],
+        undefined,
+        model.badge,
+        haystack
+      );
+    },
+    [capabilityFilter]
+  );
+
   const quickAccessModels = useMemo(
-    () => getQuickAccessLocalModels().filter((model) => !isModelDownloaded(model.filename)),
-    [active]
+    () =>
+      getQuickAccessLocalModels(capabilityFilter).filter(
+        (model) => !isModelDownloaded(model.filename)
+      ),
+    [active, capabilityFilter]
   );
   const readyModels = useMemo(
-    () => LOCAL_MODEL_CATALOG.filter((model) => isModelDownloaded(model.filename)),
-    [active]
+    () =>
+      LOCAL_MODEL_CATALOG.filter((model) => isModelDownloaded(model.filename)).filter(
+        matchesCapability
+      ),
+    [active, matchesCapability]
   );
-  const runtimeLoadedKey = active ? getLoadedOnDeviceModelKey() : null;
-  const effectiveLoadedKey =
-    runtimeLoadedKey ??
-    (selectedKey && readyModels.some((model) => model.key === selectedKey) ? selectedKey : null);
+  const loadedKey = active ? getLoadedOnDeviceModelKey() : null;
   const loadedModel =
-    effectiveLoadedKey != null
-      ? readyModels.find((model) => model.key === effectiveLoadedKey) ?? null
-      : null;
-  const idleReadyModels = readyModels.filter((model) => model.key !== effectiveLoadedKey);
+    loadedKey != null ? readyModels.find((model) => model.key === loadedKey) ?? null : null;
+  const idleReadyModels = readyModels.filter((model) => model.key !== loadedKey);
 
   const performEject = async (model: LocalModelInfo) => {
     setEjectingKey(model.key);
@@ -294,7 +322,16 @@ function LocalModelPanel({
           />
         </View>
       ) : null}
-      {!blocked && readyModels.length === 0 && quickAccessModels.length === 0 ? (
+      <ModelModalityFilters
+        selected={capabilityFilter}
+        onChange={onCapabilityFilterChange}
+        colors={colors}
+        style={styles.localCapabilityFilters}
+      />
+      {!blocked &&
+      capabilityFilter === "all" &&
+      readyModels.length === 0 &&
+      quickAccessModels.length === 0 ? (
         <View style={styles.localEmpty}>
           <Ionicons name="download-outline" size={28} color={colors.textDim} />
           <Text style={styles.localEmptyTitle}>No models on device</Text>
@@ -371,6 +408,7 @@ function LocalModelPanel({
             <LibraryCatalogRow
               key={model.key}
               platform="phone"
+              modelId={model.downloadUrl}
               provider={model.provider}
               name={model.name}
               trait={{ label: model.badge, color: model.badgeColor }}
@@ -378,6 +416,8 @@ function LocalModelPanel({
               onDownload={onOpenLibrary}
               disabled={blocked}
               colors={colors}
+              iconMonochrome
+              catalogSource="huggingface"
             />
           ))}
         </View>
@@ -414,6 +454,7 @@ export default function ChatModelPicker({
   const [showLibrary, setShowLibrary] = useState(false);
   const [libraryTab, setLibraryTab] = useState<ModelLibraryTab>("system");
   const [localSelectError, setLocalSelectError] = useState<string | null>(null);
+  const [capabilityFilter, setCapabilityFilter] = useState<ModelCapabilityFilter>("all");
   const localBlocked = IS_EXPO_GO || !!disableLocal;
 
   const remotePlatform = useMemo(
@@ -440,6 +481,11 @@ export default function ChatModelPicker({
     [remotePlatform]
   );
 
+  const hasActiveModel = useMemo(() => {
+    if (chatMode === "remote") return !!remoteModelId?.trim();
+    return !!localModelKey;
+  }, [chatMode, remoteModelId, localModelKey]);
+
   useEffect(() => {
     if (visible) {
       setTab(chatMode);
@@ -459,7 +505,10 @@ export default function ChatModelPicker({
       setLocalSelectError(null);
     }
     setTab(mode);
-    onModeChange(mode);
+    // Browsing tabs must not swap the loaded model — only an explicit row selection should.
+    if (!hasActiveModel) {
+      onModeChange(mode);
+    }
   };
 
   const handleRemoteSelect = useCallback(
@@ -523,12 +572,19 @@ export default function ChatModelPicker({
   return (
     <Modal
       visible={visible}
+      transparent
       animationType="slide"
-      presentationStyle="pageSheet"
+      presentationStyle="overFullScreen"
       onRequestClose={handleRequestClose}
     >
-      <GestureHandlerRootView style={[modalStyles.pageContainer, { flex: 1 }]}>
-      <SwipeDismissSheet direction="down" onDismiss={handleClose} style={modalStyles.pageContainer}>
+      <GestureHandlerRootView style={modalStyles.sheetOverlayRoot}>
+      <SwipeDismissSheet
+        direction="down"
+        overlayPeel
+        backdropColor={palette.overlayLight}
+        onDismiss={handleClose}
+        style={modalStyles.pageContainer}
+      >
       <View style={[modalStyles.pageContainer, { paddingTop: insets.top }]}>
         <View style={modalStyles.pageHeader}>
           <DismissAffordance kind="down" colors={palette} />
@@ -557,10 +613,13 @@ export default function ChatModelPicker({
               platform={remotePlatform}
               bottomInset={insets.bottom + 16}
               suggestedLimit={8}
-              monochromeIcons
               hideSearch
               quickAccessCatalog
               libraryLayout
+              greyUnselectedIcons
+              showModalityFilters
+              modalityFilter={capabilityFilter}
+              onModalityFilterChange={setCapabilityFilter}
             />
           ) : (
             <LocalModelPanel
@@ -572,6 +631,8 @@ export default function ChatModelPicker({
               blocked={localBlocked}
               selectError={localSelectError}
               onDismissSelectError={() => setLocalSelectError(null)}
+              capabilityFilter={capabilityFilter}
+              onCapabilityFilterChange={setCapabilityFilter}
               styles={styles}
               colors={palette}
               bottomInset={insets.bottom}
@@ -596,6 +657,11 @@ function createStyles(colors: ThemeColors) {
   return StyleSheet.create({
     body: { flex: 1 },
     tabsWrap: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 6 },
+    localCapabilityFilters: {
+      paddingHorizontal: 0,
+      paddingBottom: 4,
+      marginBottom: 4,
+    },
     localPanelRoot: { flex: 1 },
     localPanelScroll: { flex: 1 },
     searchWrap: {
@@ -669,8 +735,8 @@ function createStyles(colors: ThemeColors) {
     localRowDisabled: { opacity: 0.6 },
     localRowPressed: { opacity: 0.75 },
     localIcon: {
-      width: 38,
-      height: 38,
+      width: 44,
+      height: 44,
       borderRadius: 10,
       alignItems: "center",
       justifyContent: "center",

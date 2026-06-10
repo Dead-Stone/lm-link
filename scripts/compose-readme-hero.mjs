@@ -1,6 +1,6 @@
 /**
  * README hero — LM Studio mark (in place) + android-face-overlay.json Lottie.
- * Matches AppOpeningAnimation: masked logo with animated Android head on top.
+ * Opening splash + README hero — masked logo with animated Android head on top.
  * Output: assets/readme-hero.gif
  */
 import { execFileSync } from "child_process";

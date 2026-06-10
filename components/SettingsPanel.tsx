@@ -25,15 +25,15 @@ import {
 } from "react-native";
 import { ScrollView } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import ModelLibraryModal from "../components/ModelLibraryModal";
-import ModelModeBadgeIcon from "../components/ModelModeBadgeIcon";
-import NetworkScanModal from "../components/NetworkScanModal";
-import SetupGuideModal from "../components/SetupGuideModal";
-import SettingsCreatorFooter from "../components/SettingsCreatorFooter";
-import DismissAffordance from "../components/DismissAffordance";
-import SwipeDismissSheet from "../components/SwipeDismissSheet";
+import ModelLibraryModal from "./ModelLibraryModal";
+import ModelModeBadgeIcon from "./ModelModeBadgeIcon";
+import NetworkScanModal from "./NetworkScanModal";
+import SetupGuideModal from "./SetupGuideModal";
+import SettingsCreatorFooter from "./SettingsCreatorFooter";
+import DismissAffordance from "./DismissAffordance";
+import { useHubNavigation } from "../lib/hub-navigation";
 import { LOCAL_MODEL_CATALOG } from "../lib/local-models";
-import ThemedConfirmDialog from "../components/ThemedConfirmDialog";
+import ThemedConfirmDialog from "./ThemedConfirmDialog";
 import { formatConnectionTestError } from "../lib/errors";
 import {
   getEffectiveLocalServerUrl,
@@ -414,8 +414,13 @@ const LocalConnectionPanel = forwardRef<
   localApiToken: string;
   setLocalApiToken: (v: string) => void;
   savedApiToken: string;
+  localHfToken: string;
+  setLocalHfToken: (v: string) => void;
+  savedHfToken: string;
   showLocalToken: boolean;
   setShowLocalToken: (v: boolean) => void;
+  showLocalHfToken: boolean;
+  setShowLocalHfToken: (v: boolean) => void;
   connStatus: ConnStatus;
   connMessage: string;
   setConnStatus: (s: ConnStatus) => void;
@@ -439,8 +444,13 @@ const LocalConnectionPanel = forwardRef<
     localApiToken,
     setLocalApiToken,
     savedApiToken,
+    localHfToken,
+    setLocalHfToken,
+    savedHfToken,
     showLocalToken,
     setShowLocalToken,
+    showLocalHfToken,
+    setShowLocalHfToken,
     connStatus,
     connMessage,
     setConnStatus,
@@ -460,7 +470,8 @@ const LocalConnectionPanel = forwardRef<
   const trimmedUrl = localBaseUrl.trim();
   const hasChanges =
     trimmedUrl !== savedLocalUrl.trim() ||
-    sanitizeApiToken(localApiToken) !== sanitizeApiToken(savedApiToken);
+    sanitizeApiToken(localApiToken) !== sanitizeApiToken(savedApiToken) ||
+    sanitizeApiToken(localHfToken) !== sanitizeApiToken(savedHfToken);
   const isConnected = !!savedLocalUrl.trim();
   const [expanded, setExpanded] = useState(!isConnected);
   const wasSavingRef = useRef(false);
@@ -646,7 +657,7 @@ const LocalConnectionPanel = forwardRef<
       {showAdvanced ? (
         <View style={connPanelStyles.advancedBlock}>
           <Text style={connPanelStyles.advancedHint}>
-            API token for downloads and when authentication is enabled — LM Studio → Developer → Manage Tokens
+            LM Studio token for downloads and when authentication is enabled — LM Studio → Developer → Manage Tokens
           </Text>
           <View style={connPanelStyles.advancedInputWrap}>
             <TextInput
@@ -674,6 +685,37 @@ const LocalConnectionPanel = forwardRef<
             >
               <Ionicons
                 name={showLocalToken ? "eye-off-outline" : "eye-outline"}
+                size={18}
+                color={colors.textMuted}
+              />
+            </Pressable>
+          </View>
+          <Text style={[connPanelStyles.advancedHint, connPanelStyles.advancedHintSpaced]}>
+            Hugging Face token for model library browse — overrides the dev token in `.env` when set
+          </Text>
+          <View style={connPanelStyles.advancedInputWrap}>
+            <TextInput
+              value={localHfToken}
+              onChangeText={setLocalHfToken}
+              placeholder="hf_…"
+              placeholderTextColor={colors.placeholder}
+              secureTextEntry={!showLocalHfToken}
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={[
+                connPanelStyles.fieldInput,
+                connPanelStyles.fieldInputMono,
+                connPanelStyles.advancedInput,
+                showLocalHfToken && connPanelStyles.advancedInputPlain,
+              ]}
+            />
+            <Pressable
+              onPress={() => setShowLocalHfToken(!showLocalHfToken)}
+              style={connPanelStyles.advancedEye}
+              hitSlop={8}
+            >
+              <Ionicons
+                name={showLocalHfToken ? "eye-off-outline" : "eye-outline"}
                 size={18}
                 color={colors.textMuted}
               />
@@ -787,7 +829,6 @@ function ModelDefaultSummary({
             modelId={defaultModel}
             size={14}
             color={colors.textMuted}
-            monochrome
           />
           <Text style={styles.modelSummaryText} numberOfLines={1}>
             {remoteLabel}
@@ -805,7 +846,6 @@ function ModelDefaultSummary({
             label={localModelName ?? deviceLabel}
             size={14}
             color={colors.textMuted}
-            monochrome
           />
           <Text style={styles.modelSummaryText} numberOfLines={1}>
             {deviceLabel}
@@ -816,12 +856,13 @@ function ModelDefaultSummary({
   );
 }
 
-export default function SettingsScreen() {
+export default function SettingsPanel() {
   const insets = useSafeAreaInsets();
   const { keyboardHeight, composerLift } = useKeyboardInset();
   const keyboardInset = keyboardLift(keyboardHeight, composerLift);
   const scrollBottomPadding = footerBottomPadding(insets.bottom, keyboardHeight, 32);
   const router = useRouter();
+  const { openChat } = useHubNavigation();
   const { localAdvanced } = useLocalSearchParams<{ localAdvanced?: string }>();
   const { settings, updateSettings, account, setAccount, resetApp } = useApp();
   const colors = useSettingsColors();
@@ -845,8 +886,11 @@ export default function SettingsScreen() {
   );
   const [savingLocal, setSavingLocal] = useState(false);
   const savedApiToken = settings.apiKey ?? account?.token ?? "";
+  const savedHfToken = settings.hfToken ?? "";
   const [localApiToken, setLocalApiToken] = useState(savedApiToken);
+  const [localHfToken, setLocalHfToken] = useState(savedHfToken);
   const [showLocalToken, setShowLocalToken] = useState(false);
+  const [showLocalHfToken, setShowLocalHfToken] = useState(false);
   const [localAdvancedOpen, setLocalAdvancedOpen] = useState(false);
   const [localPrompt, setLocalPrompt] = useState(settings.defaultSystemPrompt);
   const [showClearDataConfirm, setShowClearDataConfirm] = useState(false);
@@ -868,6 +912,9 @@ export default function SettingsScreen() {
   useEffect(() => {
     setLocalApiToken(savedApiToken);
   }, [savedApiToken]);
+  useEffect(() => {
+    setLocalHfToken(savedHfToken);
+  }, [savedHfToken]);
   useEffect(() => {
     if (localAdvanced === "1") {
       openLocalConnectionAdvanced();
@@ -910,8 +957,10 @@ export default function SettingsScreen() {
     if (!url) return;
     setSavingLocal(true);
     const token = sanitizeApiToken(localApiToken);
+    const hfToken = sanitizeApiToken(localHfToken);
     const patch: Partial<typeof settings> = {
       ...(token ? { apiKey: token } : {}),
+      hfToken: hfToken || undefined,
     };
     if (isHubUrl(settings.baseUrl)) {
       await updateSettings({ ...patch, localServerUrl: url });
@@ -926,20 +975,14 @@ export default function SettingsScreen() {
     setSavingLocal(false);
     setConnStatus("idle");
     setConnMessage("");
-  }, [localBaseUrl, localApiToken, updateSettings, settings.baseUrl, account, setAccount]);
+  }, [localBaseUrl, localApiToken, localHfToken, updateSettings, settings.baseUrl, account, setAccount]);
 
   const localModelInfo = LOCAL_MODEL_CATALOG.find((m) => m.key === settings.defaultLocalModel);
 
   return (
-    <SwipeDismissSheet direction="right" style={styles.container}>
+    <View style={styles.container}>
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-        <DismissAffordance
-          kind="left"
-          colors={colors}
-          onPress={() => {
-            if (router.canGoBack()) router.back();
-          }}
-        />
+        <DismissAffordance kind="left" colors={colors} onPress={openChat} />
         <Text style={styles.topBarTitle}>Settings</Text>
         <View style={styles.topBarBtn} />
       </View>
@@ -965,8 +1008,13 @@ export default function SettingsScreen() {
               localApiToken={localApiToken}
               setLocalApiToken={setLocalApiToken}
               savedApiToken={savedApiToken}
+              localHfToken={localHfToken}
+              setLocalHfToken={setLocalHfToken}
+              savedHfToken={savedHfToken}
               showLocalToken={showLocalToken}
               setShowLocalToken={setShowLocalToken}
+              showLocalHfToken={showLocalHfToken}
+              setShowLocalHfToken={setShowLocalHfToken}
               connStatus={connStatus}
               connMessage={connMessage}
               setConnStatus={setConnStatus}
@@ -1128,7 +1176,8 @@ export default function SettingsScreen() {
             try {
               await resetApp();
               setShowClearDataConfirm(false);
-              router.dismissTo("/chat/new");
+              openChat();
+              router.replace("/chat/new");
             } catch {
               setShowClearDataConfirm(false);
             }
@@ -1155,7 +1204,7 @@ export default function SettingsScreen() {
         }}
       />
       </View>
-    </SwipeDismissSheet>
+    </View>
   );
 }
 
@@ -1296,6 +1345,9 @@ function createConnPanelStyles(colors: ThemeColors) {
     color: colors.textDim,
     fontSize: 11,
     lineHeight: 15,
+  },
+  advancedHintSpaced: {
+    marginTop: 8,
   },
   advancedInputWrap: {
     position: "relative",

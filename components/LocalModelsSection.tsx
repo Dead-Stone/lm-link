@@ -30,11 +30,31 @@ import ThemedConfirmDialog from "./ThemedConfirmDialog";
 import ThemedError from "./ThemedError";
 import ModelModeBadgeIcon from "./ModelModeBadgeIcon";
 import ModelProviderIcon from "./ModelProviderIcon";
+import { PlatformDownloadStat } from "./PlatformDownloadStat";
+import { useApp } from "../lib/context";
 import { errorFromUnknown } from "../lib/errors";
 import { createModalTheme } from "../lib/modal-theme";
-import { formatFileSize, resolveFileSizeLabel } from "../lib/model-size";
-import { extractModelParamLabel } from "../lib/model-name";
-import { fetchHuggingFaceModelEntry } from "../lib/huggingface-model-search";
+import {
+  estimateDownloadSizeFromParams,
+  formatFileSize,
+  resolveFileSizeLabel,
+} from "../lib/model-size";
+import { extractModelParamLabel, parseModelName } from "../lib/model-name";
+import {
+  fetchHuggingFaceModelEntry,
+  getCachedHfLibrarySizeLabel,
+} from "../lib/huggingface-model-search";
+import { fetchLmStudioArtifactDownloadCount } from "../lib/lmstudio-hub-artifact";
+import {
+  libraryBrowseItemDetailScore,
+  mergeStableLibraryBrowseItems,
+} from "../lib/library-browse-list";
+import {
+  filterLibraryBrowseItems,
+  groupLibraryBrowseItems,
+  LibraryBrowseFilters,
+  sliceGroupedBrowseItems,
+} from "../lib/library-filters";
 import { matchesLibrarySearch } from "../lib/library-search";
 import type { RemoteLibraryEntry } from "../lib/remote-model-library";
 import {
@@ -50,6 +70,7 @@ import {
   getQuickAccessLocalModels,
   IS_EXPO_GO,
   LOCAL_MODEL_CATALOG,
+  localModelIdHaystack,
   LocalModelInfo,
   QUICK_ACCESS_LOCAL_MODEL_KEYS,
   deleteModelFile,
@@ -62,6 +83,7 @@ import {
 import ModelDownloadStringField from "./ModelDownloadStringField";
 import { radii, ThemeColors, useAccentPalette, useTheme } from "../lib/theme";
 import {
+  getModelCapabilityStatItems,
   ModelModalityFilters,
   ModelStatItem,
   ModelStatLine,
@@ -71,11 +93,13 @@ import {
   trimModelStats,
   LIBRARY_DOWNLOAD_PAGE_SIZE,
   LIBRARY_INSTALLED_PAGE_SIZE,
+  LibraryRowSizeLabel,
   LibrarySeeMoreButton,
+  statItemsWithoutSize,
 } from "./ModelPicker";
 import {
-  modelMatchesModalityFilter,
-  ModelModalityFilter,
+  modelMatchesCapabilityFilter,
+  ModelCapabilityFilter,
 } from "../lib/vision-models";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -113,10 +137,20 @@ function formatETA(secs: number): string {
 export function filterLocalModels(
   models: LocalModelInfo[],
   query: string,
-  modalityFilter: ModelModalityFilter = "all"
+  capabilityFilter: ModelCapabilityFilter = "all"
 ): LocalModelInfo[] {
   return models.filter((model) => {
-    if (!modelMatchesModalityFilter(model.key, modalityFilter)) return false;
+    if (
+      !modelMatchesCapabilityFilter(
+        localModelIdHaystack(model),
+        capabilityFilter,
+        [],
+        undefined,
+        model.badge
+      )
+    ) {
+      return false;
+    }
     return matchesLibrarySearch(
       [
         model.key,
@@ -144,7 +178,22 @@ function resolveLocalModelSizeLabel(
       if (formatted) return formatted;
     }
   }
-  return resolveFileSizeLabel(model.sizeLabel, model.filename, model.key);
+  const fromLabel = resolveFileSizeLabel(model.sizeLabel, model.filename, model.key);
+  if (fromLabel) return fromLabel;
+
+  const param =
+    extractModelParamLabel(model.name, model.filename, model.key) ??
+    parseModelName(model.filename).sizeTag;
+  if (!param) return null;
+
+  const estimate = estimateDownloadSizeFromParams(param);
+  return estimate ? estimate.replace(/^~\s*/, "") : null;
+}
+
+function resolveLocalCatalogDisplaySize(model: LocalModelInfo): string | null {
+  return (
+    resolveLocalModelSizeLabel(model) ?? getCachedHfLibrarySizeLabel(model.downloadUrl)
+  );
 }
 
 export function getLocalModelStatItems(
@@ -153,9 +202,12 @@ export function getLocalModelStatItems(
 ): ModelStatItem[] {
   const paramLabel = extractModelParamLabel(model.name, model.filename, model.key);
   const sizeLabel = resolveLocalModelSizeLabel(model, options);
+  const capabilityItems = getModelCapabilityStatItems(localModelIdHaystack(model), {
+    badge: model.badge,
+  });
   return [
     ...trimModelStats([
-      { glyph: "Aa", label: "", modality: "text", group: "modality" },
+      ...capabilityItems,
       ...(paramLabel
         ? [{ icon: "hardware-chip-outline" as const, label: paramLabel, role: "param" as const }]
         : []),
@@ -250,7 +302,6 @@ function ModelCard({
   onSelect,
   onChat,
   onClearError,
-  monochromeIcons = false,
 }: {
   model: LocalModelInfo;
   state: ModelState;
@@ -261,7 +312,6 @@ function ModelCard({
   onSelect?: () => void;
   onChat?: () => void;
   onClearError: () => void;
-  monochromeIcons?: boolean;
 }) {
   const colors = useAccentPalette();
   const cardStyles = useMemo(() => createCardStyles(colors), [colors]);
@@ -279,11 +329,12 @@ function ModelCard({
         <View style={cardStyles.modelIcon}>
           <ModelModeBadgeIcon
             platform="phone"
+            modelId={model.downloadUrl}
             provider={model.provider}
             label={model.name}
-            size={24}
+            size={28}
             color={isSelected ? colors.primaryLight : colors.textMuted}
-            monochrome={!isSelected}
+            catalogSource="huggingface"
           />
         </View>
 
@@ -561,15 +612,20 @@ function createBannerStyles(colors: ThemeColors) {
 function LocalDownloadedLibraryRow({
   model,
   onPress,
+  loaded = false,
+  colorfulLogo = false,
   rowStyles,
   colors,
 }: {
   model: LocalModelInfo;
   onPress: () => void;
+  loaded?: boolean;
+  colorfulLogo?: boolean;
   rowStyles: ReturnType<typeof createInstalledRowStyles>;
   colors: ThemeColors;
 }) {
   const sizeLabel = resolveLocalModelSizeLabel(model, { useActualFileSize: true });
+  const stats = getLocalModelStatItems(model, { useActualFileSize: true });
 
   return (
     <View style={rowStyles.wrap}>
@@ -580,23 +636,42 @@ function LocalDownloadedLibraryRow({
       <View style={rowStyles.icon}>
         <ModelModeBadgeIcon
           platform="phone"
+          modelId={model.downloadUrl}
           provider={model.provider}
           label={model.name}
-          size={20}
+          size={26}
           color={colors.textMuted}
-          monochrome
+          colorfulLogo={colorfulLogo}
+          catalogSource="huggingface"
         />
       </View>
       <View style={rowStyles.body}>
-        <Text style={rowStyles.name} numberOfLines={1}>
-          {model.name}
-        </Text>
-        <Text style={rowStyles.subtitle} numberOfLines={1}>
-          {model.provider}
-        </Text>
-        {sizeLabel ? <Text style={rowStyles.meta}>{sizeLabel}</Text> : null}
+        <View style={rowStyles.titleRow}>
+          <Text style={rowStyles.name} numberOfLines={1}>
+            {model.name}
+          </Text>
+          {loaded ? (
+            <ModelTraitBadge
+              trait={{ label: "Loaded", color: colors.primaryLight }}
+              muted
+              colors={colors}
+            />
+          ) : (
+            <ModelTraitBadge
+              trait={{ label: model.badge, color: model.badgeColor }}
+              muted
+              colors={colors}
+            />
+          )}
+        </View>
+        <ModelStatLine
+          items={statItemsWithoutSize(stats)}
+          colors={colors}
+          textStyle={rowStyles.stats}
+          muted
+        />
       </View>
-      <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
+      <LibraryRowSizeLabel label={sizeLabel} colors={colors} />
       </Pressable>
     </View>
   );
@@ -626,6 +701,7 @@ function LocalModelDetailSheet({
   downloading,
   disabled,
   colors,
+  hfToken,
 }: {
   model: LocalModelInfo | null;
   visible: boolean;
@@ -634,12 +710,15 @@ function LocalModelDetailSheet({
   downloading: boolean;
   disabled?: boolean;
   colors: ThemeColors;
+  hfToken?: string;
 }) {
+  const hfAuth = useMemo(() => ({ hfToken }), [hfToken]);
   const modalStyles = useMemo(() => createModalTheme(colors), [colors]);
   const detailStyles = useMemo(() => createLocalDetailStyles(colors), [colors]);
   const stats = model ? getLocalModelStatItems(model) : [];
   const [hfDescription, setHfDescription] = useState<string | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
+  const [downloadRevision, setDownloadRevision] = useState(0);
 
   useEffect(() => {
     if (!visible || !model) {
@@ -652,18 +731,24 @@ function LocalModelDetailSheet({
     let cancelled = false;
     setDetailsLoading(true);
 
-    void fetchHuggingFaceModelEntry(model.downloadUrl)
-      .then((entry) => {
+    void Promise.all([
+      fetchHuggingFaceModelEntry(model.downloadUrl, hfAuth),
+      fetchLmStudioArtifactDownloadCount(model.downloadUrl),
+    ])
+      .then(([entry]) => {
         if (!cancelled) setHfDescription(entry?.description ?? null);
       })
       .finally(() => {
-        if (!cancelled) setDetailsLoading(false);
+        if (!cancelled) {
+          setDetailsLoading(false);
+          setDownloadRevision((revision) => revision + 1);
+        }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [visible, model?.key, model?.downloadUrl]);
+  }, [visible, model?.key, model?.downloadUrl, hfAuth]);
 
   const copyString = async (value: string) => {
     await Clipboard.setStringAsync(value);
@@ -673,6 +758,12 @@ function LocalModelDetailSheet({
   if (!model) return null;
 
   const description = hfDescription ?? model.description;
+  const downloadEntry = {
+    id: model.downloadUrl,
+    description: hfDescription ?? undefined,
+    publisher: model.provider,
+    badgeColor: model.badgeColor,
+  };
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -684,11 +775,13 @@ function LocalModelDetailSheet({
               <View style={detailStyles.icon}>
                 <ModelModeBadgeIcon
                   platform="phone"
+                  modelId={model.downloadUrl}
                   provider={model.provider}
                   label={model.name}
                   size={24}
-                  color={colors.textMuted}
-                  monochrome
+                  color={colors.primaryLight}
+                  colorfulLogo
+                  catalogSource="huggingface"
                 />
               </View>
               <View style={detailStyles.headerBody}>
@@ -697,12 +790,19 @@ function LocalModelDetailSheet({
               </View>
               <ModelTraitBadge
                 trait={{ label: model.badge, color: model.badgeColor }}
-                muted
+                muted={false}
                 colors={colors}
               />
             </View>
 
             <ModelStatLine items={stats} colors={colors} textStyle={detailStyles.stats} muted />
+            <PlatformDownloadStat
+              entry={downloadEntry}
+              colors={colors}
+              textStyle={detailStyles.stats}
+              loading={detailsLoading}
+              cacheRevision={downloadRevision}
+            />
             {detailsLoading ? (
               <View style={detailStyles.descriptionWrap}>
                 <ActivityIndicator size="small" color={colors.textMuted} />
@@ -876,6 +976,7 @@ function LocalCatalogRow({
   onDownload,
   onClearError,
   disabled,
+  colorfulLogo = false,
   rowStyles,
   colors,
 }: {
@@ -885,10 +986,12 @@ function LocalCatalogRow({
   onDownload: () => void;
   onClearError?: () => void;
   disabled?: boolean;
+  colorfulLogo?: boolean;
   rowStyles: ReturnType<typeof createCatalogRowStyles>;
   colors: ThemeColors;
 }) {
   const stats = getLocalModelStatItems(model);
+  const sizeLabel = resolveLocalCatalogDisplaySize(model);
   const downloading = state.status === "downloading";
   const hasError = state.status === "error" && !!state.error;
 
@@ -906,11 +1009,13 @@ function LocalCatalogRow({
       <View style={rowStyles.icon}>
         <ModelModeBadgeIcon
           platform="phone"
+          modelId={model.downloadUrl}
           provider={model.provider}
           label={model.name}
-          size={22}
+          size={26}
           color={colors.textDim}
-          monochrome
+          colorfulLogo={colorfulLogo}
+          catalogSource="huggingface"
         />
       </View>
       <View style={rowStyles.body}>
@@ -924,7 +1029,12 @@ function LocalCatalogRow({
             colors={colors}
           />
         </View>
-        <ModelStatLine items={stats} colors={colors} textStyle={rowStyles.stats} muted />
+        <ModelStatLine
+          items={statItemsWithoutSize(stats)}
+          colors={colors}
+          textStyle={rowStyles.stats}
+          muted
+        />
         {downloading ? (
           <View style={rowStyles.progressTrack}>
             <View
@@ -936,6 +1046,7 @@ function LocalCatalogRow({
           </View>
         ) : null}
       </View>
+      <LibraryRowSizeLabel label={sizeLabel} colors={colors} />
       <Pressable
         onPress={(event) => {
           event.stopPropagation();
@@ -955,9 +1066,6 @@ function LocalCatalogRow({
           <Ionicons name="cloud-download-outline" size={18} color={colors.primaryLight} />
         )}
       </Pressable>
-      {onPress ? (
-        <Ionicons name="chevron-forward" size={16} color={colors.textDim} style={rowStyles.rowChevron} />
-      ) : null}
     </Pressable>
     {hasError ? (
       <ThemedError
@@ -986,10 +1094,9 @@ function createCatalogRowStyles(colors: ThemeColors) {
     },
     rowBrowse: { alignItems: "center" },
     rowPressed: { opacity: 0.82 },
-    rowChevron: { marginTop: 2, flexShrink: 0 },
     icon: {
-      width: 38,
-      height: 38,
+      width: 44,
+      height: 44,
       alignItems: "center",
       justifyContent: "center",
       flexShrink: 0,
@@ -1003,7 +1110,7 @@ function createCatalogRowStyles(colors: ThemeColors) {
       gap: 6,
       marginBottom: 4,
     },
-    name: { color: colors.text, fontSize: 17, fontWeight: "700", lineHeight: 22, flexShrink: 1 },
+    name: { color: colors.text, fontSize: 16, fontWeight: "600", lineHeight: 21, flexShrink: 1 },
     stats: { color: colors.textMuted, fontSize: 11, lineHeight: 15 },
     progressTrack: {
       height: 3,
@@ -1043,7 +1150,7 @@ function LocalInstalledRow({
   ejecting = false,
   loading = false,
   browseOnly = false,
-  monochromeIcons = false,
+  colorfulLogo = false,
   rowStyles,
   colors,
 }: {
@@ -1055,7 +1162,7 @@ function LocalInstalledRow({
   onSelect?: () => void;
   onClearSelection?: () => void;
   browseOnly?: boolean;
-  monochromeIcons?: boolean;
+  colorfulLogo?: boolean;
   rowStyles: ReturnType<typeof createInstalledRowStyles>;
   colors: ThemeColors;
 }) {
@@ -1077,11 +1184,13 @@ function LocalInstalledRow({
           <View style={rowStyles.icon}>
             <ModelModeBadgeIcon
               platform="phone"
+              modelId={model.downloadUrl}
               provider={model.provider}
               label={model.name}
-              size={20}
+              size={26}
               color={isSelected ? colors.primaryLight : colors.textDim}
-              monochrome={monochromeIcons || !isSelected}
+              colorfulLogo={colorfulLogo}
+              catalogSource="huggingface"
             />
           </View>
           <Pressable
@@ -1098,7 +1207,7 @@ function LocalInstalledRow({
               </Text>
               <ModelTraitBadge
                 trait={{ label: model.badge, color: model.badgeColor }}
-                muted={monochromeIcons || !isSelected}
+                muted={!isSelected}
                 colors={colors}
               />
             </View>
@@ -1106,7 +1215,7 @@ function LocalInstalledRow({
               items={stats}
               colors={colors}
               textStyle={rowStyles.stats}
-              muted={monochromeIcons || !isSelected}
+              muted={!isSelected}
             />
           </Pressable>
         </ModelRowActionMute>
@@ -1163,8 +1272,8 @@ function createInstalledRowStyles(colors: ThemeColors) {
       zIndex: 1,
     },
     icon: {
-      width: 38,
-      height: 38,
+      width: 44,
+      height: 44,
       alignItems: "center",
       justifyContent: "center",
       flexShrink: 0,
@@ -1177,7 +1286,7 @@ function createInstalledRowStyles(colors: ThemeColors) {
       gap: 6,
       marginBottom: 4,
     },
-    name: { color: colors.text, fontSize: 17, fontWeight: "700", lineHeight: 22, flexShrink: 1 },
+    name: { color: colors.text, fontSize: 16, fontWeight: "600", lineHeight: 21, flexShrink: 1 },
     nameSelected: { color: colors.primaryLight },
     subtitle: {
       color: colors.textDim,
@@ -1235,11 +1344,16 @@ export type UnifiedDiscoverConfig = {
   remoteEntries: RemoteLibraryEntry[];
   renderRemoteRow: (entry: RemoteLibraryEntry) => React.ReactNode;
   remoteSortName: (entry: RemoteLibraryEntry) => string;
+  /** Parent-owned visible row count for stable pagination. */
+  visibleCount?: number;
   hasMoreRemote?: boolean;
   onSeeMoreRemote?: () => void;
   loadingMoreRemote?: boolean;
   loading?: boolean;
   moreDiscoverTitle?: string;
+  browseFilters?: LibraryBrowseFilters;
+  /** LM Studio → Hugging Face → phone section headers in browse. */
+  groupBySource?: boolean;
 };
 
 export function LocalModelsManager({
@@ -1260,14 +1374,15 @@ export function LocalModelsManager({
   blocked = false,
   showQuickDownloadLocal = false,
   unifiedDiscover,
+  libraryActive = true,
 }: {
   selectedKey?: string | null;
   onSelect?: (key: string | null) => void;
   showChatAction?: boolean;
   monochromeIcons?: boolean;
   searchQuery?: string;
-  modalityFilter?: ModelModalityFilter;
-  onModalityFilterChange?: (filter: ModelModalityFilter) => void;
+  modalityFilter?: ModelCapabilityFilter;
+  onModalityFilterChange?: (filter: ModelCapabilityFilter) => void;
   hideModalityFilters?: boolean;
   /** Installed rows + download cards, matching the System library tab. */
   libraryLayout?: boolean;
@@ -1276,7 +1391,7 @@ export function LocalModelsManager({
   /** Download catalog only — hide installed/loaded rows (Model Library). */
   downloadOnly?: boolean;
   /** Render only downloaded or discover rows in unified library. */
-  librarySection?: "all" | "downloaded" | "discover";
+  librarySection?: "all" | "downloaded" | "installed" | "loaded" | "discover";
   hideSectionTitles?: boolean;
   suppressFootnote?: boolean;
   /** Downloads and selection disabled (e.g. Expo Go) — list still visible. */
@@ -1285,8 +1400,12 @@ export function LocalModelsManager({
   showQuickDownloadLocal?: boolean;
   /** Merge Mac/PC catalog rows with on-device discover rows in one list. */
   unifiedDiscover?: UnifiedDiscoverConfig;
+  /** Model library modal visibility — resets browse ordering when reopened. */
+  libraryActive?: boolean;
 }) {
   const router = useRouter();
+  const { settings } = useApp();
+  const hfAuth = useMemo(() => ({ hfToken: settings.hfToken }), [settings.hfToken]);
   const colors = useAccentPalette();
   const styles = useMemo(() => createLocalModelsStyles(colors), [colors]);
   const installedRowStyles = useMemo(() => createInstalledRowStyles(colors), [colors]);
@@ -1300,16 +1419,27 @@ export function LocalModelsManager({
   const [ejectingKey, setEjectingKey] = useState<string | null>(null);
   const [loadingKey, setLoadingKey] = useState<string | null>(null);
   const [internalModalityFilter, setInternalModalityFilter] =
-    useState<ModelModalityFilter>("all");
+    useState<ModelCapabilityFilter>("all");
   const [installedVisibleCount, setInstalledVisibleCount] = useState(LIBRARY_INSTALLED_PAGE_SIZE);
   const [downloadVisibleCount, setDownloadVisibleCount] = useState(LIBRARY_DOWNLOAD_PAGE_SIZE);
   const [detailModel, setDetailModel] = useState<LocalModelInfo | null>(null);
+  const [hfSizeRevision, setHfSizeRevision] = useState(0);
   const [customUrl, setCustomUrl] = useState("");
   const [customUrlError, setCustomUrlError] = useState<string | null>(null);
   const [customDownloading, setCustomDownloading] = useState(false);
   const [customModels, setCustomModels] = useState<LocalModelInfo[]>([]);
   const modalityFilter = controlledModalityFilter ?? internalModalityFilter;
   const setModalityFilter = onModalityFilterChange ?? setInternalModalityFilter;
+  const effectiveCapabilityFilter =
+    unifiedDiscover?.browseFilters?.capability ?? modalityFilter;
+  const discoverVisibleCount = unifiedDiscover?.visibleCount ?? downloadVisibleCount;
+  const discoverOrderResetKey = `${searchQuery}\0${effectiveCapabilityFilter}\0${libraryActive ? "1" : "0"}`;
+  const discoverOrderResetRef = useRef(discoverOrderResetKey);
+  const discoverStableOrderRef = useRef<string[]>([]);
+  if (discoverOrderResetRef.current !== discoverOrderResetKey) {
+    discoverOrderResetRef.current = discoverOrderResetKey;
+    discoverStableOrderRef.current = [];
+  }
 
   // Active downloads: key → AbortController (cancel token)
   const downloadRefs = useRef<Record<string, AbortController>>({});
@@ -1544,8 +1674,8 @@ export function LocalModelsManager({
   }, [customModels]);
 
   const filteredCatalog = useMemo(
-    () => filterLocalModels(catalogModels, searchQuery, modalityFilter),
-    [catalogModels, searchQuery, modalityFilter]
+    () => filterLocalModels(catalogModels, searchQuery, effectiveCapabilityFilter),
+    [catalogModels, searchQuery, effectiveCapabilityFilter]
   );
 
   const installedModels = filteredCatalog.filter((m) => states[m.key]?.status === "ready");
@@ -1568,54 +1698,71 @@ export function LocalModelsManager({
   useEffect(() => {
     setInstalledVisibleCount(LIBRARY_INSTALLED_PAGE_SIZE);
     setDownloadVisibleCount(LIBRARY_DOWNLOAD_PAGE_SIZE);
-  }, [searchQuery, modalityFilter]);
+  }, [searchQuery, effectiveCapabilityFilter]);
 
   const visibleInstalledModels =
-    browseOnly || librarySection === "downloaded"
+    browseOnly || librarySection === "downloaded" || librarySection === "installed"
       ? installedModels.slice(0, installedVisibleCount)
       : installedModels;
+  const visibleIdleInstalledModels =
+    browseOnly || librarySection === "installed"
+      ? idleInstalledModels.slice(0, installedVisibleCount)
+      : idleInstalledModels;
   const visibleAvailableModels = browseOnly || librarySection === "discover"
     ? availableModels.slice(0, downloadVisibleCount)
     : availableModels;
   const hasMoreInstalled =
-    (browseOnly || librarySection === "downloaded") &&
+    (browseOnly || librarySection === "downloaded" || librarySection === "installed") &&
     libraryLayout &&
-    installedModels.length > installedVisibleCount;
+    (librarySection === "installed"
+      ? idleInstalledModels.length > installedVisibleCount
+      : installedModels.length > installedVisibleCount);
 
   const mergedDiscoverItems = useMemo(() => {
     if (!unifiedDiscover || librarySection !== "discover") return [];
-    const excludeLocalQuick = showQuickDownloadLocal && !searchQuery.trim();
-    const remote = unifiedDiscover.remoteEntries.map((entry) => ({
-      kind: "remote" as const,
-      key: `remote:${entry.id}`,
-      sort: unifiedDiscover.remoteSortName(entry).toLowerCase(),
-      entry,
-    }));
-    const local = availableModels
-      .filter((model) => !excludeLocalQuick || !quickAccessLocalKeySet.has(model.key))
-      .map((model) => ({
-        kind: "local" as const,
-        key: `local:${model.key}`,
-        sort: model.name.toLowerCase(),
-        model,
-      }));
-    return [...remote, ...local].sort((a, b) => a.sort.localeCompare(b.sort));
+    const previousKeys =
+      discoverStableOrderRef.current.length > 0
+        ? discoverStableOrderRef.current
+        : undefined;
+    const merged = mergeStableLibraryBrowseItems(
+      unifiedDiscover.remoteEntries,
+      availableModels,
+      previousKeys
+    );
+    discoverStableOrderRef.current = merged.map((item) => item.key);
+    if (!unifiedDiscover.browseFilters) return merged;
+    return filterLibraryBrowseItems(merged, unifiedDiscover.browseFilters);
   }, [
     unifiedDiscover,
     librarySection,
     availableModels,
-    showQuickDownloadLocal,
     searchQuery,
-    quickAccessLocalKeySet,
+    effectiveCapabilityFilter,
   ]);
 
-  const visibleMergedDiscoverItems = mergedDiscoverItems.slice(0, downloadVisibleCount);
+  const groupedDiscover = useMemo(() => {
+    if (!unifiedDiscover?.groupBySource) return null;
+    return groupLibraryBrowseItems(mergedDiscoverItems, libraryBrowseItemDetailScore);
+  }, [unifiedDiscover?.groupBySource, mergedDiscoverItems]);
+
+  const slicedGroupedDiscover = useMemo(() => {
+    if (!groupedDiscover) return null;
+    return sliceGroupedBrowseItems(groupedDiscover, discoverVisibleCount);
+  }, [groupedDiscover, discoverVisibleCount]);
+
+  const visibleMergedDiscoverItems = unifiedDiscover?.groupBySource
+    ? (slicedGroupedDiscover?.groups.flatMap((group) => group.items) ?? [])
+    : mergedDiscoverItems.slice(0, discoverVisibleCount);
+
+  const mergedDiscoverTotalCount = unifiedDiscover?.groupBySource
+    ? (groupedDiscover?.totalCount ?? mergedDiscoverItems.length)
+    : mergedDiscoverItems.length;
 
   const hasMoreDownloadable =
     (browseOnly || librarySection === "discover") &&
     libraryLayout &&
     (unifiedDiscover
-      ? mergedDiscoverItems.length > downloadVisibleCount || !!unifiedDiscover.hasMoreRemote
+      ? discoverVisibleCount < mergedDiscoverTotalCount || !!unifiedDiscover.hasMoreRemote
       : availableModels.length > downloadVisibleCount);
 
   const openModelDetail = useCallback((model: LocalModelInfo) => {
@@ -1631,6 +1778,7 @@ export function LocalModelsManager({
           state={states[model.key] ?? defaultState()}
           disabled={blocked || IS_EXPO_GO}
           onPress={libraryLayout ? () => openModelDetail(model) : undefined}
+          colorfulLogo={libraryLayout}
           rowStyles={catalogRowStyles}
           colors={colors}
           onDownload={() => handleDownload(model)}
@@ -1668,7 +1816,6 @@ export function LocalModelsManager({
               model={model}
               state={states[model.key] ?? defaultState()}
               isSelected={selectedKey === model.key}
-              monochromeIcons={monochromeIcons}
               onDownload={() => handleDownload(model)}
               onCancel={() => handleCancel(model)}
               onDelete={() => handleDelete(model)}
@@ -1686,20 +1833,23 @@ export function LocalModelsManager({
     });
   };
 
-  const noSearchResults =
+  const noDiscoverResults =
     libraryLayout &&
     librarySection === "discover" &&
-    searchQuery.trim().length > 0 &&
     (unifiedDiscover
       ? !unifiedDiscover.loading && mergedDiscoverItems.length === 0
-      : filteredCatalog.length === 0);
+      : searchQuery.trim().length > 0 && filteredCatalog.length === 0);
 
   const showDownloadedSection =
     librarySection === "all"
       ? browseOnly && !downloadOnly
-      : librarySection === "downloaded";
+      : librarySection === "downloaded" || librarySection === "installed";
+  const showLoadedSection = librarySection === "loaded";
   const showDiscoverSection =
     librarySection === "all" ? true : librarySection === "discover";
+  /** Chat picker load/eject swipes — not Model Library (view-only rows). */
+  const showSwipeLoadRows =
+    !browseOnly && !downloadOnly && (!libraryLayout || librarySection === "all");
   const showStorageBar =
     !IS_EXPO_GO && !blocked && librarySection !== "downloaded";
   const showCustomUrlField =
@@ -1728,7 +1878,6 @@ export function LocalModelsManager({
             }}
             onDownload={() => void handleCustomUrlDownload()}
             placeholder="huggingface.co/…/resolve/main/model.gguf"
-            hint="Paste a direct Hugging Face GGUF download link."
             colors={colors}
             downloading={customDownloading}
           />
@@ -1749,7 +1898,10 @@ export function LocalModelsManager({
         </View>
       )}
 
-      {libraryLayout && !hideModalityFilters && librarySection === "all" ? (
+      {libraryLayout &&
+      !hideModalityFilters &&
+      !unifiedDiscover?.browseFilters &&
+      (librarySection === "all" || librarySection === "discover") ? (
         <ModelModalityFilters
           selected={modalityFilter}
           onChange={setModalityFilter}
@@ -1758,24 +1910,56 @@ export function LocalModelsManager({
         />
       ) : null}
 
-      {noSearchResults ? (
+      {noDiscoverResults ? (
         <View style={styles.emptySearch}>
-          <Ionicons name="search-outline" size={28} color={colors.textDim} />
-          <Text style={styles.emptySearchTitle}>
-            {unifiedDiscover ? "No models match your search" : "No on-device models match your search"}
-          </Text>
-          <Text style={styles.emptySearchBody}>
-            Try a model name, provider, org/model, or prefix like qwen/
-          </Text>
+          <Text style={styles.emptySearchTitle}>No model found.</Text>
         </View>
       ) : libraryLayout ? (
         <>
+          {showLoadedSection && loadedModel ? (
+            <View style={styles.librarySection}>
+              <LocalDownloadedLibraryRow
+                model={loadedModel}
+                loaded
+                colorfulLogo={libraryLayout}
+                onPress={() => setDetailModel(loadedModel)}
+                rowStyles={installedRowStyles}
+                colors={colors}
+              />
+            </View>
+          ) : null}
+
+          {librarySection === "installed" && idleInstalledModels.length > 0 ? (
+            <View style={styles.librarySection}>
+              {visibleIdleInstalledModels.map((model) => (
+                <LocalDownloadedLibraryRow
+                  key={model.key}
+                  model={model}
+                  colorfulLogo={libraryLayout}
+                  onPress={() => setDetailModel(model)}
+                  rowStyles={installedRowStyles}
+                  colors={colors}
+                />
+              ))}
+              {hasMoreInstalled ? (
+                <LibrarySeeMoreButton
+                  colors={colors}
+                  onPress={() =>
+                    setInstalledVisibleCount((count) => count + LIBRARY_INSTALLED_PAGE_SIZE)
+                  }
+                />
+              ) : null}
+            </View>
+          ) : null}
+
           {librarySection === "downloaded" && installedModels.length > 0 ? (
             <View style={styles.librarySection}>
               {visibleInstalledModels.map((model) => (
                 <LocalDownloadedLibraryRow
                   key={model.key}
                   model={model}
+                  loaded={model.key === loadedKey}
+                  colorfulLogo={libraryLayout}
                   onPress={() => setDetailModel(model)}
                   rowStyles={installedRowStyles}
                   colors={colors}
@@ -1801,7 +1985,7 @@ export function LocalModelsManager({
                     model={model}
                     isSelected={selectedKey === model.key}
                     browseOnly
-                    monochromeIcons={monochromeIcons}
+                    colorfulLogo={libraryLayout}
                     rowStyles={installedRowStyles}
                     colors={colors}
                     onSelect={
@@ -1821,10 +2005,9 @@ export function LocalModelsManager({
             </View>
           ) : null}
 
-          {!browseOnly && loadedModel ? (
+          {showSwipeLoadRows && loadedModel ? (
             <View style={styles.librarySection}>
               <Text style={styles.librarySectionTitle}>Loaded in memory</Text>
-              <SectionHintLines colors={colors} line="Swipe left to eject" />
               <AnimatedLibraryRow rowKey={loadedModel.key}>
                 <LocalInstalledRow
                   model={loadedModel}
@@ -1832,7 +2015,6 @@ export function LocalModelsManager({
                   isLoadedInMemory
                   ejecting={ejectingKey === loadedModel.key}
                   loading={loadingKey === loadedModel.key}
-                  monochromeIcons={monochromeIcons}
                   rowStyles={installedRowStyles}
                   colors={colors}
                   onSelect={
@@ -1854,7 +2036,7 @@ export function LocalModelsManager({
             </View>
           ) : null}
 
-          {!browseOnly && idleInstalledModels.length > 0 ? (
+          {showSwipeLoadRows && idleInstalledModels.length > 0 ? (
             <View
               style={[
                 styles.librarySection,
@@ -1862,7 +2044,6 @@ export function LocalModelsManager({
               ]}
             >
               <Text style={styles.librarySectionTitle}>Installed on device</Text>
-              <SectionHintLines colors={colors} line="Swipe right to load" />
               {idleInstalledModels.map((model) => (
                 <AnimatedLibraryRow key={model.key} rowKey={model.key}>
                   <LocalInstalledRow
@@ -1870,7 +2051,6 @@ export function LocalModelsManager({
                     isSelected={selectedKey === model.key}
                     ejecting={ejectingKey === model.key}
                     loading={loadingKey === model.key}
-                    monochromeIcons={monochromeIcons}
                     rowStyles={installedRowStyles}
                     colors={colors}
                     onSelect={
@@ -1897,73 +2077,71 @@ export function LocalModelsManager({
 
           {showDiscoverSection && unifiedDiscover && librarySection === "discover" ? (
             <View style={styles.librarySection}>
-              {showQuickDownloadLocal && quickAccessLocalModels.length > 0 ? (
-                <View style={styles.quickDownloadBlock}>
-                  <Text style={styles.quickDownloadPlatformTitle}>On device</Text>
-                  {quickAccessLocalModels.map((model) => (
-                    <LocalCatalogRow
-                      key={model.key}
-                      model={model}
-                      state={states[model.key] ?? defaultState()}
-                      disabled={blocked || IS_EXPO_GO}
-                      onPress={() => openModelDetail(model)}
-                      rowStyles={catalogRowStyles}
-                      colors={colors}
-                      onDownload={() => handleDownload(model)}
-                      onClearError={() =>
-                        patchState(model.key, { status: "idle", error: undefined })
-                      }
-                    />
-                  ))}
+              {unifiedDiscover.loading && visibleMergedDiscoverItems.length === 0 ? (
+                <View style={styles.libraryLoading}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                  <Text style={styles.libraryLoadingText}>Loading models…</Text>
                 </View>
-              ) : null}
-              {unifiedDiscover.loading &&
-              mergedDiscoverItems.length === 0 &&
-              quickAccessLocalModels.length === 0 ? (
-                <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 8 }} />
-              ) : null}
-              {visibleMergedDiscoverItems.length > 0 ? (
+              ) : visibleMergedDiscoverItems.length > 0 ? (
                 <>
-                  {unifiedDiscover.moreDiscoverTitle ? (
-                    <Text style={styles.librarySectionTitle}>
-                      {unifiedDiscover.moreDiscoverTitle}
-                    </Text>
-                  ) : null}
-                  {visibleMergedDiscoverItems.map((item) =>
-                item.kind === "remote" ? (
-                  <React.Fragment key={item.key}>
-                    {unifiedDiscover.renderRemoteRow(item.entry)}
-                  </React.Fragment>
-                ) : (
-                  <LocalCatalogRow
-                    key={item.model.key}
-                    model={item.model}
-                    state={states[item.model.key] ?? defaultState()}
-                    disabled={blocked || IS_EXPO_GO}
-                    onPress={() => openModelDetail(item.model)}
-                    rowStyles={catalogRowStyles}
-                    colors={colors}
-                    onDownload={() => handleDownload(item.model)}
-                    onClearError={() =>
-                      patchState(item.model.key, { status: "idle", error: undefined })
-                    }
-                  />
-                )
-              )}
+                  {unifiedDiscover.groupBySource && slicedGroupedDiscover
+                    ? slicedGroupedDiscover.groups.flatMap((group) =>
+                        group.items.map((item) =>
+                          item.kind === "remote" ? (
+                            <React.Fragment key={item.key}>
+                              {unifiedDiscover.renderRemoteRow(item.entry)}
+                            </React.Fragment>
+                          ) : (
+                            <LocalCatalogRow
+                              key={item.model.key}
+                              model={item.model}
+                              state={states[item.model.key] ?? defaultState()}
+                              disabled={blocked || IS_EXPO_GO}
+                              onPress={() => openModelDetail(item.model)}
+                              colorfulLogo={libraryLayout}
+                              rowStyles={catalogRowStyles}
+                              colors={colors}
+                              onDownload={() => handleDownload(item.model)}
+                              onClearError={() =>
+                                patchState(item.model.key, {
+                                  status: "idle",
+                                  error: undefined,
+                                })
+                              }
+                            />
+                          )
+                        )
+                      )
+                    : visibleMergedDiscoverItems.map((item) =>
+                        item.kind === "remote" ? (
+                          <React.Fragment key={item.key}>
+                            {unifiedDiscover.renderRemoteRow(item.entry)}
+                          </React.Fragment>
+                        ) : (
+                          <LocalCatalogRow
+                            key={item.model.key}
+                            model={item.model}
+                            state={states[item.model.key] ?? defaultState()}
+                            disabled={blocked || IS_EXPO_GO}
+                            onPress={() => openModelDetail(item.model)}
+                            colorfulLogo={libraryLayout}
+                            rowStyles={catalogRowStyles}
+                            colors={colors}
+                            onDownload={() => handleDownload(item.model)}
+                            onClearError={() =>
+                              patchState(item.model.key, { status: "idle", error: undefined })
+                            }
+                          />
+                        )
+                      )}
                 </>
               ) : null}
-              {hasMoreDownloadable ? (
+              {hasMoreDownloadable || unifiedDiscover.loadingMoreRemote ? (
                 <LibrarySeeMoreButton
                   colors={colors}
                   loading={unifiedDiscover.loadingMoreRemote}
-                  disabled={!!unifiedDiscover.loading}
-                  onPress={() => {
-                    if (mergedDiscoverItems.length > downloadVisibleCount) {
-                      setDownloadVisibleCount((count) => count + LIBRARY_DOWNLOAD_PAGE_SIZE);
-                    } else {
-                      unifiedDiscover.onSeeMoreRemote?.();
-                    }
-                  }}
+                  disabled={unifiedDiscover.loadingMoreRemote}
+                  onPress={() => unifiedDiscover.onSeeMoreRemote?.()}
                 />
               ) : null}
             </View>
@@ -2023,7 +2201,10 @@ export function LocalModelsManager({
       <LocalModelDetailSheet
         model={detailModel}
         visible={detailModel !== null}
-        onClose={() => setDetailModel(null)}
+        onClose={() => {
+          setDetailModel(null);
+          setHfSizeRevision((revision) => revision + 1);
+        }}
         onDownload={() => {
           if (!detailModel) return;
           void handleDownload(detailModel);
@@ -2031,6 +2212,7 @@ export function LocalModelsManager({
         downloading={detailModel ? states[detailModel.key]?.status === "downloading" : false}
         disabled={blocked || IS_EXPO_GO}
         colors={colors}
+        hfToken={settings.hfToken}
       />
 
       {!suppressFootnote ? (
@@ -2078,6 +2260,18 @@ function createLocalModelsStyles(colors: ThemeColors) {
       textTransform: "uppercase",
       marginTop: 8,
       marginBottom: 2,
+    },
+    libraryLoading: {
+      alignItems: "center",
+      justifyContent: "center",
+      paddingVertical: 28,
+      paddingHorizontal: 16,
+      gap: 10,
+    },
+    libraryLoadingText: {
+      color: colors.textMuted,
+      fontSize: 13,
+      lineHeight: 18,
     },
     emptySearch: {
       alignItems: "center",

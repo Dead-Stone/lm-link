@@ -1,11 +1,20 @@
 import { searchLmStudioModels } from "./api";
+import { isPlausibleCatalogModelId } from "./catalog-model-id";
+
+export { isPlausibleCatalogModelId } from "./catalog-model-id";
 import { isModelInstalled, RemoteLibraryEntry } from "./remote-model-library";
 import { matchesModelSearchQuery, parseModelName } from "./model-name";
 import { matchesLibrarySearch, parseLibrarySearchQuery } from "./library-search";
 import { isLmStudioMacDownloadModel } from "./lmstudio-downloadable";
-import { modelMatchesModalityFilter, ModelModalityFilter } from "./vision-models";
+import {
+  isCapabilityCatalogSearchQuery,
+  modelMatchesModalityFilter,
+  ModelModalityFilter,
+} from "./vision-models";
 
-export const LM_STUDIO_CATALOG_PAGE_SIZE = 20;
+import { LIBRARY_PAGE_SIZE } from "./library-pagination";
+
+export const LM_STUDIO_CATALOG_PAGE_SIZE = LIBRARY_PAGE_SIZE;
 
 const HUB_SITEMAP_URL = "https://lmstudio.ai/hub-sitemap.xml";
 const HUB_MODELS_BASE = "https://lmstudio.ai/models";
@@ -28,31 +37,6 @@ type CatalogPageOptions = {
 
 let hubIndexPromise: Promise<CatalogFamily[]> | null = null;
 const familyDownloadIdsCache = new Map<string, string[]>();
-
-const NON_MODEL_ORG_PREFIXES = new Set([
-  "image",
-  "text",
-  "application",
-  "audio",
-  "video",
-  "font",
-  "multipart",
-]);
-
-/** Reject MIME types and other org/model-shaped noise scraped from hub HTML. */
-export function isPlausibleCatalogModelId(id: string): boolean {
-  const trimmed = id.trim();
-  if (!trimmed.includes("/")) return false;
-
-  const slash = trimmed.indexOf("/");
-  const org = trimmed.slice(0, slash).trim().toLowerCase();
-  const model = trimmed.slice(slash + 1).trim();
-  if (!org || !model || org.length > 64 || model.length > 128) return false;
-  if (NON_MODEL_ORG_PREFIXES.has(org)) return false;
-  if (!/^[a-z0-9][a-z0-9._-]*$/i.test(org)) return false;
-  if (!/^[a-z0-9][a-z0-9._@+-]*$/i.test(model)) return false;
-  return true;
-}
 
 export function dedupeCatalogEntries(entries: RemoteLibraryEntry[]): RemoteLibraryEntry[] {
   const seen = new Set<string>();
@@ -107,6 +91,7 @@ function entrySearchHaystack(id: string, family?: CatalogFamily): string {
 
 function passesCatalogSearch(id: string, family: CatalogFamily | undefined, search: string): boolean {
   if (!search.trim()) return true;
+  if (isCapabilityCatalogSearchQuery(search)) return true;
   const publisher = publisherFromModelId(id);
   return matchesLibrarySearch([entrySearchHaystack(id, family), publisher], search, {
     id,
@@ -189,6 +174,7 @@ function searchResultToEntry(
   if (!id || !isPlausibleCatalogModelId(id)) return null;
   const { displayName, family } = parseModelName(id);
   const publisher = publisherFromModelId(id);
+  const hasDownloads = typeof result.downloads === "number" && result.downloads > 0;
   return {
     id,
     name: result.name?.trim() || displayName || family,
@@ -196,6 +182,9 @@ function searchResultToEntry(
     badge: result.staffPick ? "Recomm" : undefined,
     badgeColor: badgeColorForPublisher(publisher),
     description: result.staffPick ? "LM Studio staff pick" : undefined,
+    ...(hasDownloads
+      ? { downloads: result.downloads, downloadSource: "lmstudio" as const }
+      : {}),
   };
 }
 
@@ -207,6 +196,7 @@ function idToEntry(id: string, _family?: CatalogFamily): RemoteLibraryEntry {
     name: displayName || parsedFamily,
     publisher,
     badgeColor: badgeColorForPublisher(publisher),
+    downloadSource: "lmstudio",
   };
 }
 
@@ -222,11 +212,30 @@ function passesCatalogFilters(
   return true;
 }
 
+function familyMatchesCatalogSearch(family: CatalogFamily, search: string): boolean {
+  if (!search.trim()) return true;
+  if (isCapabilityCatalogSearchQuery(search)) return true;
+  const publisher = family.slug.includes("/")
+    ? publisherFromModelId(family.slug)
+    : publisherFromModelId(`placeholder/${family.slug}`);
+  return matchesLibrarySearch(
+    [entrySearchHaystack(family.slug, family), family.slug, family.name, publisher],
+    search,
+    {
+      id: family.slug.includes("/") ? family.slug : undefined,
+      publisher,
+    }
+  );
+}
+
 async function fetchHubCatalogPage(
   options: CatalogPageOptions
 ): Promise<{ entries: RemoteLibraryEntry[]; hasMore: boolean }> {
   const pageSize = options.pageSize ?? LM_STUDIO_CATALOG_PAGE_SIZE;
-  const families = await getHubCatalogIndex();
+  const allFamilies = await getHubCatalogIndex();
+  const families = options.search.trim()
+    ? allFamilies.filter((family) => familyMatchesCatalogSearch(family, options.search))
+    : allFamilies;
   const targetStart = options.page * pageSize;
   const entries: RemoteLibraryEntry[] = [];
   let matchIndex = 0;
@@ -304,13 +313,23 @@ export async function fetchLmStudioCatalogPage(
   options: CatalogPageOptions
 ): Promise<{ entries: RemoteLibraryEntry[]; hasMore: boolean }> {
   const searchActive = options.search.trim().length > 0;
-  const macPage = await fetchMacCatalogPage(options);
 
-  if (macPage) {
-    if (macPage.entries.length > 0 || !searchActive) {
-      return macPage;
-    }
+  if (searchActive) {
+    const [macPage, hubPage] = await Promise.all([
+      fetchMacCatalogPage(options),
+      fetchHubCatalogPage(options),
+    ]);
+    const entries = dedupeCatalogEntries([
+      ...(macPage?.entries ?? []),
+      ...hubPage.entries,
+    ]);
+    return {
+      entries,
+      hasMore: (macPage?.hasMore ?? false) || hubPage.hasMore,
+    };
   }
 
+  const macPage = await fetchMacCatalogPage(options);
+  if (macPage) return macPage;
   return fetchHubCatalogPage(options);
 }

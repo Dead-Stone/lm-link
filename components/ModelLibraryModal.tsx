@@ -4,7 +4,6 @@ import * as Haptics from "expo-haptics";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Linking,
   Modal,
   Platform,
   Pressable,
@@ -23,7 +22,8 @@ import {
   getLmStudioDownloadStatus,
   isDownloadSuccessStatus,
   isHubUrl,
-  isRemoteModelLoaded,
+  isModelInMemory,
+  partitionLibraryModels,
   resolveManagementApiKey,
   resolveManagementBaseUrl,
 } from "../lib/api";
@@ -33,11 +33,14 @@ import { resolveFileSizeLabel } from "../lib/model-size";
 import { LMModel } from "../lib/types";
 import { useApp } from "../lib/context";
 import { RemoteLibraryEntry } from "../lib/remote-model-library";
+import { fetchLmStudioArtifactDownloadCount } from "../lib/lmstudio-hub-artifact";
 import {
   buildDirectDownloadEntry,
   enrichRemoteLibraryEntryFromHf,
+  fetchTrendingHuggingFaceModels,
   huggingFaceRepoIdFromString,
-  mergeDownloadableEntries,
+  concatDownloadableEntries,
+  resolveRemoteLibrarySizeLabelWithHfCache,
   searchHuggingFaceModels,
 } from "../lib/huggingface-model-search";
 import {
@@ -45,34 +48,49 @@ import {
   fetchLmStudioCatalogPage,
   LM_STUDIO_CATALOG_PAGE_SIZE,
 } from "../lib/lmstudio-catalog";
-import {
-  getQuickAccessRemoteLibrary,
-  normalizeModelKey,
-  QUICK_ACCESS_REMOTE_MODEL_IDS,
-  resolveRemoteLibraryDisplayName,
-} from "../lib/remote-model-library";
+import { resolveEntryCatalogSource } from "../lib/library-filters";
+import { normalizeModelKey, resolveRemoteLibraryDisplayName } from "../lib/remote-model-library";
 import { resolveRemoteDownloadModelString } from "../lib/model-download-string";
 import { ErrorKind, presentError } from "../lib/errors";
-import { IS_EXPO_GO, LOCAL_NATIVE_BUILD_MESSAGE } from "../lib/local-models";
+import {
+  getLoadedOnDeviceModelKey,
+  IS_EXPO_GO,
+  LOCAL_NATIVE_BUILD_MESSAGE,
+} from "../lib/local-models";
 import { createModalTheme } from "../lib/modal-theme";
 import DismissAffordance from "./DismissAffordance";
 import SwipeDismissSheet from "./SwipeDismissSheet";
 import { radii, ThemeColors, useAccentPalette } from "../lib/theme";
 import { LocalModelsManager } from "./LocalModelsSection";
 import ModelModeBadgeIcon from "./ModelModeBadgeIcon";
-import SectionHintLines, { createSectionSubtitleStyle } from "./SectionHintLines";
+import { PlatformDownloadStat } from "./PlatformDownloadStat";
+import {
+  LibraryActiveFilterChips,
+  LibraryBrowseFilterButton,
+} from "./LibraryBrowseFilters";
+import { LibraryFlowSection } from "./LibraryModelSections";
+import {
+  DEFAULT_LIBRARY_BROWSE_FILTERS,
+  LibraryBrowseFilters,
+} from "../lib/library-filters";
 import {
   filterRemoteLibraryCatalog,
   getRemoteInstalledStatItems,
   getRemoteLibraryEntryStatItems,
   LIBRARY_DOWNLOAD_PAGE_SIZE,
   LIBRARY_INSTALLED_PAGE_SIZE,
+  LibraryRowSizeLabel,
   LibrarySeeMoreButton,
   ModelStatItem,
   ModelStatLine,
   ModelTraitBadge,
   resolveRemoteModelTrait,
+  statItemsWithoutSize,
 } from "./ModelPicker";
+import {
+  capabilityCatalogSearchHint,
+  capabilityToModalityFilter,
+} from "../lib/vision-models";
 import ThemedError from "./ThemedError";
 
 export type ModelLibraryTab = "system" | "device";
@@ -85,7 +103,7 @@ type Props = {
 };
 
 function getCatalogDownloadSizeLabel(entry: RemoteLibraryEntry): string | null {
-  return resolveFileSizeLabel(entry.sizeLabel, entry.id, entry.name);
+  return resolveRemoteLibrarySizeLabelWithHfCache(entry);
 }
 
 function resolveDownloadStringLabel(entry: RemoteLibraryEntry): string {
@@ -96,13 +114,10 @@ function resolveDownloadStringLabel(entry: RemoteLibraryEntry): string {
   }
 }
 
-function remoteSystemDownloadTitle(isSearching: boolean): string {
-  return isSearching ? "Search results" : "Quick download";
-}
-
-function platformHintLine(): string {
-  return "Tap any model for details · Laptop = Mac or PC · Phone = on this device";
-}
+const LIBRARY_LOADED_TITLE = "Loaded in memory";
+const LIBRARY_INSTALLED_TITLE = "Installed";
+const LIBRARY_BROWSE_TITLE = "Library";
+const LIBRARY_SEARCH_TITLE = "Search results";
 
 function resolveEntryDescription(entry: RemoteLibraryEntry): string | null {
   const trimmed = entry.description?.trim();
@@ -186,7 +201,45 @@ function InstalledModelDetailSheet({
   colors: ThemeColors;
   styles: ReturnType<typeof createLibraryStyles>;
 }) {
+  const { settings } = useApp();
+  const hfAuth = useMemo(() => ({ hfToken: settings.hfToken }), [settings.hfToken]);
   const modalStyles = useMemo(() => createModalTheme(colors), [colors]);
+  const [downloadRevision, setDownloadRevision] = useState(0);
+  const [downloadsLoading, setDownloadsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!visible || !model) {
+      setDownloadsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setDownloadsLoading(true);
+
+    void Promise.all([
+      fetchLmStudioArtifactDownloadCount(model.id),
+      huggingFaceRepoIdFromString(model.id)
+        ? enrichRemoteLibraryEntryFromHf(
+            {
+              id: model.id,
+              name: parseModelName(model.id).displayName,
+              publisher: model.publisher ?? model.owned_by ?? "",
+              badgeColor: "#888",
+            },
+            hfAuth
+          )
+        : Promise.resolve(null),
+    ]).finally(() => {
+      if (!cancelled) {
+        setDownloadsLoading(false);
+        setDownloadRevision((revision) => revision + 1);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, model?.id, hfAuth]);
 
   const copyString = async (value: string) => {
     await Clipboard.setStringAsync(value);
@@ -197,8 +250,14 @@ function InstalledModelDetailSheet({
 
   const parsed = parseModelName(model.id);
   const stats = getRemoteInstalledStatItems(model, catalog);
+  const downloadEntry: RemoteLibraryEntry = {
+    id: model.id,
+    name: parsed.displayName,
+    publisher: model.publisher ?? model.owned_by ?? parsed.family,
+    badgeColor: "#888",
+  };
   const onDiskSize = resolveFileSizeLabel(model.size_bytes, model.id, parsed.displayName);
-  const loaded = isRemoteModelLoaded(model);
+  const loaded = isModelInMemory(model);
   const trait = resolveRemoteModelTrait(model.id);
   const publisher = model.publisher ?? model.owned_by ?? parsed.family;
 
@@ -222,11 +281,13 @@ function InstalledModelDetailSheet({
               <View style={styles.detailHeroIcon}>
                 <ModelModeBadgeIcon
                   platform="pc"
+                  modelId={model.id}
                   provider={publisher}
                   label={parsed.displayName}
                   size={28}
-                  color={colors.textMuted}
-                  monochrome
+                  color={colors.primaryLight}
+                  colorfulLogo
+                  catalogSource="lmstudio"
                 />
               </View>
               <View style={styles.detailHeroBody}>
@@ -242,11 +303,11 @@ function InstalledModelDetailSheet({
               {loaded ? (
                 <ModelTraitBadge
                   trait={{ label: "Loaded", color: colors.primaryLight }}
-                  muted
+                  muted={false}
                   colors={colors}
                 />
               ) : trait ? (
-                <ModelTraitBadge trait={trait} muted colors={colors} />
+                <ModelTraitBadge trait={trait} muted={false} colors={colors} />
               ) : null}
             </View>
 
@@ -258,6 +319,14 @@ function InstalledModelDetailSheet({
                 muted
               />
             ) : null}
+
+            <PlatformDownloadStat
+              entry={downloadEntry}
+              colors={colors}
+              textStyle={styles.libraryStats}
+              loading={downloadsLoading}
+              cacheRevision={downloadRevision}
+            />
 
             <DetailSpecGrid items={specItems} styles={styles} />
 
@@ -290,58 +359,62 @@ function InstalledModelDetailSheet({
 
 function InstalledModelRow({
   model,
-  selected,
+  catalog,
+  loaded = false,
   onPress,
   styles,
   colors,
 }: {
   model: LMModel;
-  selected: boolean;
+  catalog: LMModel[];
+  loaded?: boolean;
   onPress: () => void;
   styles: ReturnType<typeof createLibraryStyles>;
   colors: ThemeColors;
 }) {
   const parsed = parseModelName(model.id);
   const onDiskSize = resolveFileSizeLabel(model.size_bytes, model.id, parsed.displayName);
+  const publisher = model.publisher ?? model.owned_by ?? parsed.family;
+  const stats = getRemoteInstalledStatItems(model, catalog);
 
   return (
     <Pressable
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.libraryRow,
-        styles.libraryRowSelectable,
-        selected && styles.libraryRowSelected,
-        pressed && styles.libraryRowPressed,
-      ]}
+      style={({ pressed }) => [styles.libraryRow, pressed && styles.libraryRowPressed]}
     >
       <View style={styles.libraryIcon}>
         <ModelModeBadgeIcon
           platform="pc"
-          provider={model.publisher ?? model.owned_by ?? parsed.family}
+          modelId={model.id}
+          provider={publisher}
           label={parsed.displayName}
-          size={20}
-          color={selected ? colors.primaryLight : colors.textMuted}
-          monochrome={!selected}
+          size={26}
+          color={colors.textMuted}
+          colorfulLogo
+          catalogSource="lmstudio"
         />
       </View>
       <View style={styles.libraryBody}>
-        <Text
-          style={[styles.libraryName, selected && styles.libraryNameSelected]}
-          numberOfLines={1}
-        >
-          {parsed.displayName}
-        </Text>
-        <Text style={styles.libraryModelId} numberOfLines={1}>
-          {model.id}
-        </Text>
-        {onDiskSize ? <Text style={styles.libraryDownloadSize}>{onDiskSize}</Text> : null}
+        <View style={styles.libraryTitleRow}>
+          <Text style={styles.libraryName} numberOfLines={1}>
+            {parsed.displayName}
+          </Text>
+          {loaded ? (
+            <ModelTraitBadge
+              trait={{ label: "Loaded", color: colors.primaryLight }}
+              muted
+              colors={colors}
+            />
+          ) : null}
+        </View>
+        <ModelStatLine
+          items={statItemsWithoutSize(stats)}
+          colors={colors}
+          textStyle={styles.libraryStats}
+          muted
+        />
       </View>
-      <Ionicons
-        name="chevron-forward"
-        size={16}
-        color={selected ? colors.primaryLight : colors.textDim}
-        style={styles.libraryRowChevron}
-      />
+      <LibraryRowSizeLabel label={onDiskSize} colors={colors} />
     </Pressable>
   );
 }
@@ -365,9 +438,12 @@ function RemoteModelDetailSheet({
   colors: ThemeColors;
   styles: ReturnType<typeof createLibraryStyles>;
 }) {
+  const { settings } = useApp();
+  const hfAuth = useMemo(() => ({ hfToken: settings.hfToken }), [settings.hfToken]);
   const modalStyles = useMemo(() => createModalTheme(colors), [colors]);
   const [resolvedEntry, setResolvedEntry] = useState<RemoteLibraryEntry | null>(entry);
   const [detailsLoading, setDetailsLoading] = useState(false);
+  const [downloadRevision, setDownloadRevision] = useState(0);
 
   useEffect(() => {
     if (!visible || !entry) {
@@ -380,18 +456,24 @@ function RemoteModelDetailSheet({
     let cancelled = false;
     setDetailsLoading(true);
 
-    void enrichRemoteLibraryEntryFromHf(entry)
-      .then((enriched) => {
+    void Promise.all([
+      enrichRemoteLibraryEntryFromHf(entry, hfAuth),
+      fetchLmStudioArtifactDownloadCount(entry.id),
+    ])
+      .then(([enriched]) => {
         if (!cancelled) setResolvedEntry(enriched);
       })
       .finally(() => {
-        if (!cancelled) setDetailsLoading(false);
+        if (!cancelled) {
+          setDetailsLoading(false);
+          setDownloadRevision((revision) => revision + 1);
+        }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [visible, entry?.id, entry]);
+  }, [visible, entry?.id, entry, hfAuth]);
 
   const activeEntry = resolvedEntry ?? entry;
   const downloadString = activeEntry ? resolveDownloadStringLabel(activeEntry) : "";
@@ -429,11 +511,13 @@ function RemoteModelDetailSheet({
               <View style={styles.detailHeroIcon}>
                 <ModelModeBadgeIcon
                   platform="pc"
+                  modelId={activeEntry.id}
                   provider={activeEntry.publisher}
                   label={displayName}
                   size={28}
-                  color={colors.textMuted}
-                  monochrome
+                  color={colors.primaryLight}
+                  colorfulLogo
+                  catalogSource={resolveEntryCatalogSource(activeEntry)}
                 />
               </View>
               <View style={styles.detailHeroBody}>
@@ -444,7 +528,7 @@ function RemoteModelDetailSheet({
                   {activeEntry.publisher}
                 </Text>
               </View>
-              {trait ? <ModelTraitBadge trait={trait} muted colors={colors} /> : null}
+              {trait ? <ModelTraitBadge trait={trait} muted={false} colors={colors} /> : null}
             </View>
 
             {stats.length > 0 ? (
@@ -455,6 +539,14 @@ function RemoteModelDetailSheet({
                 muted
               />
             ) : null}
+
+            <PlatformDownloadStat
+              entry={activeEntry}
+              colors={colors}
+              textStyle={styles.libraryStats}
+              loading={detailsLoading}
+              cacheRevision={downloadRevision}
+            />
 
             {detailsLoading ? (
               <View style={styles.detailBlurb}>
@@ -547,6 +639,7 @@ function LibraryDownloadRow({
 }) {
   const displayName = resolveRemoteLibraryDisplayName(entry);
   const stats = getLibraryStatItems(entry);
+  const downloadSize = getCatalogDownloadSizeLabel(entry);
 
   return (
     <Pressable
@@ -556,11 +649,13 @@ function LibraryDownloadRow({
       <View style={styles.libraryIcon}>
         <ModelModeBadgeIcon
           platform="pc"
+          modelId={entry.id}
           provider={entry.publisher}
           label={displayName}
-          size={20}
+          size={26}
           color={colors.textMuted}
-          monochrome
+          colorfulLogo
+          catalogSource={resolveEntryCatalogSource(entry)}
         />
       </View>
       <View style={styles.libraryBody}>
@@ -576,7 +671,12 @@ function LibraryDownloadRow({
             />
           ) : null}
         </View>
-        <ModelStatLine items={stats} colors={colors} textStyle={styles.libraryStats} muted />
+        <ModelStatLine
+          items={statItemsWithoutSize(stats)}
+          colors={colors}
+          textStyle={styles.libraryStats}
+          muted
+        />
         {downloading ? (
           <View style={styles.progressTrack}>
             <View
@@ -588,6 +688,7 @@ function LibraryDownloadRow({
           </View>
         ) : null}
       </View>
+      <LibraryRowSizeLabel label={downloadSize} colors={colors} />
       <Pressable
         onPress={(event) => {
           event.stopPropagation();
@@ -607,7 +708,6 @@ function LibraryDownloadRow({
           <Ionicons name="cloud-download-outline" size={18} color={colors.primaryLight} />
         )}
       </Pressable>
-      <Ionicons name="chevron-forward" size={16} color={colors.textDim} style={styles.libraryRowChevron} />
     </Pressable>
   );
 }
@@ -620,6 +720,7 @@ function UnifiedModelLibrary({
   bottomInset: number;
 }) {
   const { settings, account } = useApp();
+  const hfAuth = useMemo(() => ({ hfToken: settings.hfToken }), [settings.hfToken]);
   const colors = useAccentPalette();
   const styles = useMemo(() => createLibraryStyles(colors), [colors]);
 
@@ -637,11 +738,17 @@ function UnifiedModelLibrary({
 
   const [installedModels, setInstalledModels] = useState<LMModel[]>([]);
   const [installedLoading, setInstalledLoading] = useState(false);
+  const [trendingEntries, setTrendingEntries] = useState<RemoteLibraryEntry[]>([]);
   const [catalogEntries, setCatalogEntries] = useState<RemoteLibraryEntry[]>([]);
   const [webEntries, setWebEntries] = useState<RemoteLibraryEntry[]>([]);
   const [catalogPage, setCatalogPage] = useState(0);
   const [catalogHasMore, setCatalogHasMore] = useState(false);
+  const [trendingHasMore, setTrendingHasMore] = useState(false);
+  const [hfBrowseNextUrl, setHfBrowseNextUrl] = useState<string | null>(null);
+  const [hfBrowseStarted, setHfBrowseStarted] = useState(false);
+  const [webNextUrl, setWebNextUrl] = useState<string | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(false);
+  const [trendingLoading, setTrendingLoading] = useState(false);
   const [webSearchLoading, setWebSearchLoading] = useState(false);
   const [catalogLoadingMore, setCatalogLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -653,11 +760,29 @@ function UnifiedModelLibrary({
   >({});
   const [downloadVisibleCount, setDownloadVisibleCount] = useState(LIBRARY_DOWNLOAD_PAGE_SIZE);
   const [installedVisibleCount, setInstalledVisibleCount] = useState(LIBRARY_INSTALLED_PAGE_SIZE);
+  const [deviceLoadedKey, setDeviceLoadedKey] = useState<string | null>(null);
+  const [loadedExpanded, setLoadedExpanded] = useState(true);
+  const [installedExpanded, setInstalledExpanded] = useState(false);
+  const [hfSizeRevision, setHfSizeRevision] = useState(0);
+  const [browseFilters, setBrowseFilters] = useState<LibraryBrowseFilters>(
+    DEFAULT_LIBRARY_BROWSE_FILTERS
+  );
+  const catalogModalityFilter = useMemo(
+    () => capabilityToModalityFilter(browseFilters.capability),
+    [browseFilters.capability]
+  );
+
+  const effectiveCatalogSearch = useMemo(() => {
+    const query = search.trim();
+    if (query) return query;
+    return capabilityCatalogSearchHint(browseFilters.capability);
+  }, [search, browseFilters.capability]);
 
   const installedIds = useMemo(() => installedModels.map((model) => model.id), [installedModels]);
 
   const pollRefs = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
   const catalogRequestRef = useRef(0);
+  const trendingRequestRef = useRef(0);
   const webRequestRef = useRef(0);
 
   const directDownloadEntry = useMemo(
@@ -668,61 +793,48 @@ function UnifiedModelLibrary({
   const isSearching = search.trim().length > 0;
 
   const curatedDownloadEntries = useMemo(
-    () => filterRemoteLibraryCatalog(installedIds, search),
-    [installedIds, search]
+    () => filterRemoteLibraryCatalog(installedIds, search, browseFilters.capability),
+    [installedIds, search, browseFilters.capability]
   );
 
   const downloadableEntries = useMemo(() => {
     if (!isSearching) {
-      return curatedDownloadEntries;
+      const curated = filterRemoteLibraryCatalog(installedIds, "");
+      return concatDownloadableEntries([curated, trendingEntries]);
     }
 
-    const merged = mergeDownloadableEntries(
-      dedupeCatalogEntries(catalogEntries),
-      dedupeCatalogEntries(webEntries)
-    );
-    const combined = mergeDownloadableEntries(curatedDownloadEntries, merged);
-    if (!directDownloadEntry) return combined;
-    const directKey = normalizeModelKey(directDownloadEntry.id);
-    if (combined.some((entry) => normalizeModelKey(entry.id) === directKey)) {
-      return combined;
-    }
-    return [directDownloadEntry, ...combined];
+    return concatDownloadableEntries([
+      curatedDownloadEntries,
+      catalogEntries,
+      webEntries,
+      ...(directDownloadEntry ? [directDownloadEntry] : []),
+    ]);
   }, [
     isSearching,
+    installedIds,
+    trendingEntries,
     curatedDownloadEntries,
     catalogEntries,
     webEntries,
     directDownloadEntry,
   ]);
 
-  const downloadSectionLoading = isSearching && (catalogLoading || webSearchLoading);
+  const downloadSectionInitialLoading = isSearching
+    ? (catalogLoading || webSearchLoading) &&
+      catalogEntries.length === 0 &&
+      webEntries.length === 0
+    : trendingLoading && trendingEntries.length === 0;
 
-  const quickRemoteEntries = useMemo(
-    () => getQuickAccessRemoteLibrary(installedIds),
-    [installedIds]
-  );
-
-  const quickRemoteKeySet = useMemo(
-    () => new Set(QUICK_ACCESS_REMOTE_MODEL_IDS.map((id) => normalizeModelKey(id))),
-    []
-  );
-
-  const browseDownloadableEntries = useMemo(() => {
-    if (isSearching) return downloadableEntries;
-    return downloadableEntries.filter(
-      (entry) => !quickRemoteKeySet.has(normalizeModelKey(entry.id))
-    );
-  }, [downloadableEntries, isSearching, quickRemoteKeySet]);
-
-  const visibleDownloadableEntries = useMemo(
-    () => browseDownloadableEntries.slice(0, downloadVisibleCount),
-    [browseDownloadableEntries, downloadVisibleCount]
-  );
+  const downloadSectionLoadingMore = isSearching
+    ? catalogLoadingMore || (webSearchLoading && webEntries.length > 0)
+    : catalogLoadingMore;
 
   const hasMoreDownloadable = isSearching
-    ? downloadableEntries.length > downloadVisibleCount || catalogHasMore
-    : browseDownloadableEntries.length > downloadVisibleCount;
+    ? downloadableEntries.length > downloadVisibleCount || catalogHasMore || !!webNextUrl
+    : downloadableEntries.length > downloadVisibleCount ||
+      trendingHasMore ||
+      !hfBrowseStarted ||
+      !!hfBrowseNextUrl;
 
   const filteredInstalledModels = useMemo(() => {
     return installedModels
@@ -750,12 +862,30 @@ function UnifiedModelLibrary({
       );
   }, [installedModels, search]);
 
-  const visibleInstalledModels = useMemo(
-    () => filteredInstalledModels.slice(0, installedVisibleCount),
-    [filteredInstalledModels, installedVisibleCount]
+  const { loaded: remoteLoadedModels, installed: remoteInstalledModels } = useMemo(
+    () =>
+      partitionLibraryModels(filteredInstalledModels, {
+        singleModelMode: settings.singleModelMode !== false,
+      }),
+    [filteredInstalledModels, settings.singleModelMode]
   );
 
-  const hasMoreInstalled = filteredInstalledModels.length > installedVisibleCount;
+  const visibleRemoteLoadedModels = remoteLoadedModels;
+
+  const visibleRemoteInstalledModels = useMemo(
+    () => remoteInstalledModels.slice(0, installedVisibleCount),
+    [remoteInstalledModels, installedVisibleCount]
+  );
+
+  const hasMoreRemoteLoaded = false;
+  const hasMoreRemoteInstalled = remoteInstalledModels.length > installedVisibleCount;
+
+  const hasDeviceLoaded = !IS_EXPO_GO && deviceLoadedKey != null;
+  const showLoadedSection =
+    installedLoading || visibleRemoteLoadedModels.length > 0 || hasDeviceLoaded;
+  const showInstalledSection =
+    installedLoading || visibleRemoteInstalledModels.length > 0 || !IS_EXPO_GO;
+  const librarySectionFirst = !showLoadedSection && !showInstalledSection;
 
   const refreshInstalledModels = useCallback(async () => {
     if (!active) return;
@@ -787,8 +917,8 @@ function UnifiedModelLibrary({
         const { entries, hasMore } = await fetchLmStudioCatalogPage({
           managementUrl,
           apiKey: managementApiKey,
-          search,
-          modalityFilter: "all",
+          search: effectiveCatalogSearch,
+          modalityFilter: catalogModalityFilter,
           page,
           pageSize: LM_STUDIO_CATALOG_PAGE_SIZE,
           installedIds,
@@ -814,15 +944,118 @@ function UnifiedModelLibrary({
         }
       }
     },
-    [managementUrl, managementApiKey, search, installedIds]
+    [managementUrl, managementApiKey, effectiveCatalogSearch, installedIds, catalogModalityFilter]
+  );
+
+  const loadTrendingPage = useCallback(
+    async (page: number, reset: boolean) => {
+      const requestId = ++trendingRequestRef.current;
+      const pageSize = LM_STUDIO_CATALOG_PAGE_SIZE;
+
+      if (page === 0 && reset) {
+        setTrendingLoading(true);
+        setTrendingEntries([]);
+        setTrendingHasMore(false);
+        setHfBrowseNextUrl(null);
+        setHfBrowseStarted(false);
+
+        try {
+          const lmPage = await fetchLmStudioCatalogPage({
+            managementUrl,
+            apiKey: managementApiKey,
+            search: effectiveCatalogSearch,
+            modalityFilter: catalogModalityFilter,
+            page: 0,
+            pageSize,
+            installedIds,
+          });
+          if (requestId !== trendingRequestRef.current) return;
+
+          setTrendingEntries(dedupeCatalogEntries(lmPage.entries));
+          setTrendingHasMore(lmPage.hasMore);
+        } catch (e: unknown) {
+          if (requestId !== trendingRequestRef.current) return;
+          setTrendingEntries([]);
+          setTrendingHasMore(false);
+          setError(e instanceof Error ? e.message : "Could not load model library");
+        } finally {
+          if (requestId === trendingRequestRef.current) {
+            setTrendingLoading(false);
+          }
+        }
+        return;
+      }
+
+      if (reset) {
+        setTrendingLoading(true);
+        setTrendingEntries([]);
+        setTrendingHasMore(false);
+        setHfBrowseNextUrl(null);
+        setHfBrowseStarted(false);
+      } else {
+        setCatalogLoadingMore(true);
+      }
+
+      try {
+        const lmPage = await fetchLmStudioCatalogPage({
+          managementUrl,
+          apiKey: managementApiKey,
+          search: effectiveCatalogSearch,
+          modalityFilter: catalogModalityFilter,
+          page,
+          pageSize,
+          installedIds,
+        });
+        if (requestId !== trendingRequestRef.current) return;
+
+        setTrendingEntries((prev) =>
+          dedupeCatalogEntries(reset ? lmPage.entries : [...prev, ...lmPage.entries])
+        );
+        setTrendingHasMore(lmPage.hasMore);
+      } catch (e: unknown) {
+        if (requestId !== trendingRequestRef.current) return;
+        if (reset) {
+          setTrendingEntries([]);
+          setTrendingHasMore(false);
+        }
+        setError(e instanceof Error ? e.message : "Could not load model library");
+      } finally {
+        if (requestId === trendingRequestRef.current) {
+          setTrendingLoading(false);
+          setCatalogLoadingMore(false);
+        }
+      }
+    },
+    [
+      managementUrl,
+      managementApiKey,
+      installedIds,
+      catalogModalityFilter,
+      effectiveCatalogSearch,
+      browseFilters.capability,
+      hfAuth,
+    ]
   );
 
   useEffect(() => {
     if (active) {
       setSearch("");
+      setBrowseFilters(DEFAULT_LIBRARY_BROWSE_FILTERS);
       setDownloadVisibleCount(LIBRARY_DOWNLOAD_PAGE_SIZE);
       setInstalledVisibleCount(LIBRARY_INSTALLED_PAGE_SIZE);
       setSelectedInstalled(null);
+      setLoadedExpanded(true);
+      setInstalledExpanded(false);
+      setDeviceLoadedKey(getLoadedOnDeviceModelKey());
+      setTrendingEntries([]);
+      setCatalogEntries([]);
+      setWebEntries([]);
+      setWebNextUrl(null);
+      setHfBrowseNextUrl(null);
+      setHfBrowseStarted(false);
+      setTrendingLoading(true);
+      setCatalogLoading(false);
+      setWebSearchLoading(false);
       refreshInstalledModels();
     }
     return () => {
@@ -834,25 +1067,59 @@ function UnifiedModelLibrary({
   }, [active, refreshInstalledModels]);
 
   useEffect(() => {
+    if (!active) return;
+    setDeviceLoadedKey(getLoadedOnDeviceModelKey());
+    const timer = setInterval(() => {
+      setDeviceLoadedKey(getLoadedOnDeviceModelKey());
+    }, 1500);
+    return () => clearInterval(timer);
+  }, [active]);
+
+  useEffect(() => {
     if (active) {
       setDownloadVisibleCount(LIBRARY_DOWNLOAD_PAGE_SIZE);
       setInstalledVisibleCount(LIBRARY_INSTALLED_PAGE_SIZE);
     }
-  }, [active, search]);
+  }, [active, search, browseFilters]);
 
   useEffect(() => {
     if (!active) return;
-    if (!search.trim()) {
+    if (search.trim()) {
+      setTrendingEntries([]);
+      setTrendingHasMore(false);
       setCatalogEntries([]);
       setCatalogHasMore(false);
-      setCatalogLoading(false);
-      return;
+      setCatalogLoading(true);
+      const timer = setTimeout(() => {
+        void loadCatalogPage(0, true);
+      }, 300);
+      return () => clearTimeout(timer);
     }
+
+    setCatalogEntries([]);
+    setCatalogHasMore(false);
+    setWebEntries([]);
+    setWebNextUrl(null);
+    setWebSearchLoading(false);
+    setTrendingEntries([]);
+    setTrendingHasMore(false);
+    setHfBrowseNextUrl(null);
+    setHfBrowseStarted(false);
+    setTrendingLoading(true);
     const timer = setTimeout(() => {
-      void loadCatalogPage(0, true);
-    }, 300);
+      void loadTrendingPage(0, true);
+    }, 150);
     return () => clearTimeout(timer);
-  }, [active, search, installedIds, loadCatalogPage]);
+  }, [
+    active,
+    search,
+    installedIds,
+    catalogModalityFilter,
+    browseFilters.capability,
+    effectiveCatalogSearch,
+    loadCatalogPage,
+    loadTrendingPage,
+  ]);
 
   useEffect(() => {
     if (!active) return;
@@ -860,20 +1127,26 @@ function UnifiedModelLibrary({
     const parsed = parseLibrarySearchQuery(query);
     if (!parsed.providerPrefix && query.length < 2) {
       setWebEntries([]);
+      setWebNextUrl(null);
       setWebSearchLoading(false);
       return;
     }
 
     const requestId = ++webRequestRef.current;
     setWebSearchLoading(true);
+    setWebNextUrl(null);
     const timer = setTimeout(() => {
       void (async () => {
         try {
-          const entries = await searchHuggingFaceModels(query, {
+          const page = await searchHuggingFaceModels(query, {
             installedIds,
+            capabilityFilter: browseFilters.capability,
+            limit: LM_STUDIO_CATALOG_PAGE_SIZE,
+            ...hfAuth,
           });
           if (requestId !== webRequestRef.current) return;
-          setWebEntries(entries);
+          setWebEntries(page.entries);
+          setWebNextUrl(page.nextUrl);
         } catch {
           if (requestId !== webRequestRef.current) return;
           setWebEntries([]);
@@ -886,7 +1159,7 @@ function UnifiedModelLibrary({
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [active, search, installedIds]);
+  }, [active, search, installedIds, browseFilters.capability, hfAuth]);
 
   const finishDownload = useCallback(
     async (modelId: string) => {
@@ -905,17 +1178,79 @@ function UnifiedModelLibrary({
     [refreshInstalledModels]
   );
 
+  const loadHfBrowsePage = useCallback(
+    async (cursor: string | null) => {
+      if (catalogLoadingMore) return;
+      if (cursor == null && hfBrowseStarted) return;
+      setCatalogLoadingMore(true);
+      try {
+        const page = await fetchTrendingHuggingFaceModels({
+          installedIds,
+          capabilityFilter: browseFilters.capability,
+          limit: LM_STUDIO_CATALOG_PAGE_SIZE,
+          ...(cursor ? { nextUrl: cursor } : {}),
+          ...hfAuth,
+        });
+        setHfBrowseStarted(true);
+        setTrendingEntries((prev) =>
+          dedupeCatalogEntries(concatDownloadableEntries([prev, page.entries]))
+        );
+        setHfBrowseNextUrl(page.nextUrl);
+      } catch {
+        setHfBrowseStarted(true);
+        setHfBrowseNextUrl(null);
+      } finally {
+        setCatalogLoadingMore(false);
+      }
+    },
+    [catalogLoadingMore, hfBrowseStarted, installedIds, browseFilters.capability, hfAuth]
+  );
+
+  const loadMoreWebEntries = useCallback(async () => {
+    if (!webNextUrl) return;
+    setWebSearchLoading(true);
+    try {
+      const page = await searchHuggingFaceModels(search, {
+        installedIds,
+        capabilityFilter: browseFilters.capability,
+        limit: LM_STUDIO_CATALOG_PAGE_SIZE,
+        nextUrl: webNextUrl,
+        ...hfAuth,
+      });
+      setWebEntries((prev) => dedupeCatalogEntries([...prev, ...page.entries]));
+      setWebNextUrl(page.nextUrl);
+    } catch {
+      setWebNextUrl(null);
+    } finally {
+      setWebSearchLoading(false);
+    }
+  }, [webNextUrl, search, installedIds, browseFilters.capability, hfAuth]);
+
   const handleSeeMoreDownloadable = useCallback(() => {
     const nextCount = downloadVisibleCount + LIBRARY_DOWNLOAD_PAGE_SIZE;
     setDownloadVisibleCount(nextCount);
-    if (
-      isSearching &&
-      nextCount > downloadableEntries.length &&
-      catalogHasMore &&
-      !catalogLoading &&
-      !catalogLoadingMore
-    ) {
-      void loadCatalogPage(catalogPage + 1, false);
+    if (nextCount <= downloadableEntries.length) return;
+    if (isSearching) {
+      if (catalogHasMore && !catalogLoading && !catalogLoadingMore && !webSearchLoading) {
+        void loadCatalogPage(catalogPage + 1, false);
+        return;
+      }
+      if (webNextUrl && !webSearchLoading) {
+        void loadMoreWebEntries();
+      }
+      return;
+    }
+    if (trendingHasMore && !trendingLoading && !catalogLoadingMore) {
+      const nextPage = Math.ceil(trendingEntries.length / LM_STUDIO_CATALOG_PAGE_SIZE);
+      void loadTrendingPage(nextPage, false);
+      return;
+    }
+    if (!hfBrowseStarted && !catalogLoadingMore) {
+      void loadHfBrowsePage(null);
+      return;
+    }
+    if (hfBrowseNextUrl && !catalogLoadingMore) {
+      void loadHfBrowsePage(hfBrowseNextUrl);
     }
   }, [
     isSearching,
@@ -926,6 +1261,16 @@ function UnifiedModelLibrary({
     catalogLoadingMore,
     catalogPage,
     loadCatalogPage,
+    webNextUrl,
+    webSearchLoading,
+    loadMoreWebEntries,
+    trendingHasMore,
+    trendingLoading,
+    trendingEntries.length,
+    loadTrendingPage,
+    hfBrowseStarted,
+    hfBrowseNextUrl,
+    loadHfBrowsePage,
   ]);
 
   const pollDownload = useCallback(
@@ -980,7 +1325,7 @@ function UnifiedModelLibrary({
   );
 
   const handleDownload = useCallback(
-    async (modelId: string) => {
+    async (modelId: string, downloadSource?: RemoteLibraryEntry["downloadSource"]) => {
       if (!managementUrl) {
         setError(formatDownloadError(new Error("no local url"), settings));
         return;
@@ -989,7 +1334,9 @@ function UnifiedModelLibrary({
       setError(null);
       setDownloads((prev) => ({ ...prev, [modelId]: { jobId: "", progress: 0 } }));
       try {
-        const job = await downloadLmStudioModel(managementUrl, modelId, managementApiKey);
+        const job = await downloadLmStudioModel(managementUrl, modelId, managementApiKey, {
+          downloadSource,
+        });
         if (isDownloadSuccessStatus(job.status)) {
           await finishDownload(modelId);
           return;
@@ -1040,32 +1387,8 @@ function UnifiedModelLibrary({
     </View>
   ) : null;
 
-  const showDownloadedSection =
-    installedLoading || filteredInstalledModels.length > 0 || !IS_EXPO_GO;
-
-  const showDiscoverSection = true;
-
   return (
     <View style={styles.libraryRoot}>
-      <View style={styles.searchWrap}>
-        <Ionicons name="search" size={16} color={colors.textDim} />
-        <TextInput
-          value={search}
-          onChangeText={setSearch}
-          placeholder="Search models, org/model, or qwen/…"
-          placeholderTextColor={colors.placeholder}
-          style={styles.searchInput}
-          clearButtonMode="while-editing"
-          autoCorrect={false}
-          autoCapitalize="none"
-        />
-        {search.length > 0 ? (
-          <Pressable onPress={() => setSearch("")} hitSlop={8}>
-            <Ionicons name="close-circle" size={16} color={colors.textDim} />
-          </Pressable>
-        ) : null}
-      </View>
-
       {error ? (
         <View style={styles.errorWrap}>
           <ThemedError
@@ -1098,21 +1421,25 @@ function UnifiedModelLibrary({
         showsVerticalScrollIndicator={false}
       >
         {listHeader}
-        {showDownloadedSection ? (
-          <View style={styles.installedSection}>
-            <Text style={styles.sectionTitle}>Downloaded</Text>
-            <SectionHintLines colors={colors} line={platformHintLine()} />
-            {installedLoading && filteredInstalledModels.length === 0 ? (
-              <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 8 }} />
+
+        {showLoadedSection ? (
+          <LibraryFlowSection
+            title={LIBRARY_LOADED_TITLE}
+            colors={colors}
+            first={!listHeader}
+            collapsible
+            expanded={loadedExpanded}
+            onToggle={() => setLoadedExpanded((value) => !value)}
+          >
+            {installedLoading && visibleRemoteLoadedModels.length === 0 && !hasDeviceLoaded ? (
+              <ActivityIndicator size="small" color={colors.textDim} style={styles.sectionSpinner} />
             ) : null}
-            {!installedLoading && filteredInstalledModels.length === 0 && IS_EXPO_GO ? (
-              <Text style={styles.sectionEmptyText}>No models downloaded on your Mac or PC yet.</Text>
-            ) : null}
-            {visibleInstalledModels.map((model) => (
+            {visibleRemoteLoadedModels.map((model) => (
               <InstalledModelRow
                 key={model.id}
                 model={model}
-                selected={selectedInstalled?.id === model.id}
+                catalog={installedModels}
+                loaded
                 onPress={() => {
                   void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   setSelectedInstalled(model);
@@ -1121,7 +1448,7 @@ function UnifiedModelLibrary({
                 colors={colors}
               />
             ))}
-            {hasMoreInstalled ? (
+            {hasMoreRemoteLoaded ? (
               <LibrarySeeMoreButton
                 colors={colors}
                 onPress={() =>
@@ -1130,71 +1457,130 @@ function UnifiedModelLibrary({
               />
             ) : null}
             <LocalModelsManager
-              searchQuery={search}
+              searchQuery=""
               libraryLayout
-              librarySection="downloaded"
+              librarySection="loaded"
               hideSectionTitles
               suppressFootnote
               downloadOnly
               blocked={IS_EXPO_GO}
             />
-          </View>
+          </LibraryFlowSection>
         ) : null}
-        {showDiscoverSection ? (
-          <View style={styles.downloadSection}>
-            <Text style={styles.sectionTitle}>{remoteSystemDownloadTitle(isSearching)}</Text>
-            <SectionHintLines colors={colors} line={platformHintLine()} />
-            {!isSearching && quickRemoteEntries.length > 0 ? (
-              <View style={styles.quickDownloadBlock}>
-                <Text style={styles.quickDownloadPlatformTitle}>Mac or PC</Text>
-                {quickRemoteEntries.map((entry) => (
-                  <LibraryDownloadRow
-                    key={entry.id}
-                    entry={entry}
-                    downloading={!!downloads[entry.id]}
-                    progress={downloads[entry.id]?.progress ?? null}
-                    onPress={() => setDetailEntry(entry)}
-                    onDownload={() => handleDownload(entry.id)}
-                    disabled={downloadsBlocked}
-                    styles={styles}
-                    colors={colors}
-                  />
-                ))}
-              </View>
+
+        {showInstalledSection ? (
+          <LibraryFlowSection
+            title={LIBRARY_INSTALLED_TITLE}
+            colors={colors}
+            first={!listHeader && !showLoadedSection}
+            collapsible
+            expanded={installedExpanded}
+            onToggle={() => setInstalledExpanded((value) => !value)}
+          >
+            {installedLoading && visibleRemoteInstalledModels.length === 0 ? (
+              <ActivityIndicator size="small" color={colors.textDim} style={styles.sectionSpinner} />
+            ) : null}
+            {visibleRemoteInstalledModels.map((model) => (
+              <InstalledModelRow
+                key={model.id}
+                model={model}
+                catalog={installedModels}
+                onPress={() => {
+                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setSelectedInstalled(model);
+                }}
+                styles={styles}
+                colors={colors}
+              />
+            ))}
+            {hasMoreRemoteInstalled ? (
+              <LibrarySeeMoreButton
+                colors={colors}
+                onPress={() =>
+                  setInstalledVisibleCount((count) => count + LIBRARY_INSTALLED_PAGE_SIZE)
+                }
+              />
             ) : null}
             <LocalModelsManager
-              searchQuery={search}
+              searchQuery=""
               libraryLayout
-              librarySection="discover"
+              librarySection="installed"
               hideSectionTitles
               suppressFootnote
               downloadOnly
               blocked={IS_EXPO_GO}
-              showQuickDownloadLocal={!isSearching}
-              unifiedDiscover={{
-                remoteEntries: visibleDownloadableEntries,
-                renderRemoteRow: (entry) => (
-                  <LibraryDownloadRow
-                    entry={entry}
-                    downloading={!!downloads[entry.id]}
-                    progress={downloads[entry.id]?.progress ?? null}
-                    onPress={() => setDetailEntry(entry)}
-                    onDownload={() => handleDownload(entry.id)}
-                    disabled={downloadsBlocked}
-                    styles={styles}
-                    colors={colors}
-                  />
-                ),
-                remoteSortName: resolveRemoteLibraryDisplayName,
-                hasMoreRemote: hasMoreDownloadable,
-                onSeeMoreRemote: handleSeeMoreDownloadable,
-                loadingMoreRemote: catalogLoadingMore,
-                loading: downloadSectionLoading,
-                moreDiscoverTitle: !isSearching ? "More to discover" : undefined,
-              }}
             />
-          </View>
+          </LibraryFlowSection>
         ) : null}
+
+        <LibraryFlowSection
+          title={isSearching ? LIBRARY_SEARCH_TITLE : LIBRARY_BROWSE_TITLE}
+          colors={colors}
+          first={librarySectionFirst && !listHeader}
+          hideTitle
+        >
+          <View style={styles.searchWrap}>
+            <Ionicons name="search" size={16} color={colors.textDim} />
+            <TextInput
+              value={search}
+              onChangeText={setSearch}
+              placeholder="Search catalog, org/model, or qwen/…"
+              placeholderTextColor={colors.placeholder}
+              style={styles.searchInput}
+              clearButtonMode="while-editing"
+              autoCorrect={false}
+              autoCapitalize="none"
+            />
+            <LibraryBrowseFilterButton
+              filters={browseFilters}
+              onChange={setBrowseFilters}
+              colors={colors}
+            />
+            {search.length > 0 ? (
+              <Pressable onPress={() => setSearch("")} hitSlop={8}>
+                <Ionicons name="close-circle" size={16} color={colors.textDim} />
+              </Pressable>
+            ) : null}
+          </View>
+          <LibraryActiveFilterChips
+            filters={browseFilters}
+            onChange={setBrowseFilters}
+            colors={colors}
+          />
+          <LocalModelsManager
+            searchQuery={search}
+            libraryLayout
+            librarySection="discover"
+            hideSectionTitles
+            suppressFootnote
+            downloadOnly
+            blocked={IS_EXPO_GO}
+            libraryActive={active}
+            unifiedDiscover={{
+              remoteEntries: downloadableEntries,
+              browseFilters,
+              groupBySource: false,
+              renderRemoteRow: (entry) => (
+                <LibraryDownloadRow
+                  entry={entry}
+                  downloading={!!downloads[entry.id]}
+                  progress={downloads[entry.id]?.progress ?? null}
+                  onPress={() => setDetailEntry(entry)}
+                  onDownload={() => handleDownload(entry.id, entry.downloadSource)}
+                  disabled={downloadsBlocked}
+                  styles={styles}
+                  colors={colors}
+                />
+              ),
+              remoteSortName: resolveRemoteLibraryDisplayName,
+              visibleCount: downloadVisibleCount,
+              hasMoreRemote: hasMoreDownloadable,
+              onSeeMoreRemote: handleSeeMoreDownloadable,
+              loadingMoreRemote: downloadSectionLoadingMore,
+              loading: downloadSectionInitialLoading,
+            }}
+          />
+        </LibraryFlowSection>
         {apiTokenNote}
       </ScrollView>
 
@@ -1210,10 +1596,13 @@ function UnifiedModelLibrary({
       <RemoteModelDetailSheet
         entry={detailEntry}
         visible={detailEntry !== null}
-        onClose={() => setDetailEntry(null)}
+        onClose={() => {
+          setDetailEntry(null);
+          setHfSizeRevision((revision) => revision + 1);
+        }}
         onDownload={() => {
           if (!detailEntry) return;
-          void handleDownload(detailEntry.id);
+          void handleDownload(detailEntry.id, detailEntry.downloadSource);
         }}
         downloading={detailEntry ? !!downloads[detailEntry.id] : false}
         downloadDisabled={downloadsBlocked}
@@ -1255,39 +1644,6 @@ function LibraryBlockBanner({
   );
 }
 
-function LibraryFooter({
-  bottomInset,
-  styles,
-  colors,
-}: {
-  bottomInset: number;
-  styles: ReturnType<typeof createModalStyles>;
-  colors: ThemeColors;
-}) {
-  return (
-    <View style={[styles.footer, { paddingBottom: bottomInset + 12, gap: 4 }]}>
-      <Pressable
-        onPress={() => void Linking.openURL("https://lmstudio.ai/trending/models")}
-        style={({ pressed }) => [styles.footerLink, pressed && styles.footerLinkPressed]}
-      >
-        <Ionicons name="open-outline" size={16} color={colors.textMuted} />
-        <Text style={styles.footerLinkText}>Browse LM Studio Hub</Text>
-        <Ionicons name="chevron-forward" size={14} color={colors.textDim} />
-      </Pressable>
-      <Pressable
-        onPress={() =>
-          void Linking.openURL("https://huggingface.co/models?library=gguf&sort=downloads")
-        }
-        style={({ pressed }) => [styles.footerLink, pressed && styles.footerLinkPressed]}
-      >
-        <Ionicons name="globe-outline" size={16} color={colors.textMuted} />
-        <Text style={styles.footerLinkText}>Browse GGUF on Hugging Face</Text>
-        <Ionicons name="chevron-forward" size={14} color={colors.textDim} />
-      </Pressable>
-    </View>
-  );
-}
-
 export default function ModelLibraryModal({
   visible,
   onClose,
@@ -1300,12 +1656,19 @@ export default function ModelLibraryModal({
   return (
     <Modal
       visible={visible}
+      transparent
       animationType="slide"
-      presentationStyle="pageSheet"
+      presentationStyle="overFullScreen"
       onRequestClose={onClose}
     >
-      <GestureHandlerRootView style={[modalStyles.pageContainer, { flex: 1 }]}>
-      <SwipeDismissSheet direction="down" onDismiss={onClose} style={modalStyles.pageContainer}>
+      <GestureHandlerRootView style={modalStyles.sheetOverlayRoot}>
+      <SwipeDismissSheet
+        direction="down"
+        overlayPeel
+        backdropColor={colors.overlayLight}
+        onDismiss={onClose}
+        style={modalStyles.pageContainer}
+      >
       <View style={[modalStyles.pageContainer, { paddingTop: insets.top }]}>
         <View style={modalStyles.pageHeader}>
           <DismissAffordance kind="down" colors={colors} />
@@ -1314,10 +1677,8 @@ export default function ModelLibraryModal({
         </View>
 
         <View style={styles.body}>
-          <UnifiedModelLibrary active={visible} bottomInset={insets.bottom + 88} />
+          <UnifiedModelLibrary active={visible} bottomInset={insets.bottom + 24} />
         </View>
-
-        <LibraryFooter bottomInset={insets.bottom} styles={styles} colors={colors} />
       </View>
       </SwipeDismissSheet>
       </GestureHandlerRootView>
@@ -1328,23 +1689,6 @@ export default function ModelLibraryModal({
 function createModalStyles(colors: ThemeColors) {
   return StyleSheet.create({
     body: { flex: 1 },
-    tabsWrap: { paddingHorizontal: 16, paddingBottom: 8, paddingTop: 4 },
-    footer: {
-      paddingHorizontal: 16,
-      paddingTop: 10,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: colors.border,
-      backgroundColor: colors.bgElevated,
-    },
-    footerLink: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "center",
-      gap: 8,
-      paddingVertical: 12,
-    },
-    footerLinkPressed: { opacity: 0.75 },
-    footerLinkText: { color: colors.textMuted, fontSize: 14, fontWeight: "600", flex: 1 },
   });
 }
 
@@ -1359,7 +1703,6 @@ function createLibraryStyles(colors: ThemeColors) {
       flexDirection: "row",
       alignItems: "center",
       gap: 8,
-      marginHorizontal: 16,
       marginBottom: 10,
       paddingHorizontal: 14,
       paddingVertical: 11,
@@ -1370,24 +1713,7 @@ function createLibraryStyles(colors: ThemeColors) {
     },
     searchInput: { flex: 1, color: colors.inputText, fontSize: 15, padding: 0 },
     errorWrap: { paddingHorizontal: 16, marginBottom: 8 },
-    installedSection: { paddingTop: 8, paddingBottom: 4 },
-    downloadSection: { marginTop: 20, paddingTop: 8, paddingBottom: 4 },
-    quickDownloadBlock: { marginBottom: 4 },
-    quickDownloadPlatformTitle: {
-      color: colors.textDim,
-      fontSize: 12,
-      fontWeight: "700",
-      letterSpacing: 0.4,
-      textTransform: "uppercase",
-      marginTop: 4,
-      marginBottom: 2,
-    },
-    sectionEmptyText: {
-      color: colors.textDim,
-      fontSize: 14,
-      lineHeight: 20,
-      marginVertical: 8,
-    },
+    sectionSpinner: { marginVertical: 10, alignSelf: "center" },
     hubBanner: {
       flexDirection: "row",
       alignItems: "flex-start",
@@ -1451,8 +1777,6 @@ function createLibraryStyles(colors: ThemeColors) {
       lineHeight: 17,
       marginTop: 6,
     },
-    installedHeader: { paddingTop: 8, marginBottom: 8 },
-    sectionTitle: createSectionSubtitleStyle(colors),
     libraryRow: {
       flexDirection: "row",
       alignItems: "center",
@@ -1462,21 +1786,9 @@ function createLibraryStyles(colors: ThemeColors) {
       borderBottomColor: colors.border,
     },
     libraryRowPressed: { opacity: 0.82 },
-    libraryRowSelectable: {
-      borderRadius: radii.sm,
-      marginHorizontal: -4,
-      paddingHorizontal: 4,
-    },
-    libraryRowSelected: {
-      backgroundColor: colors.primaryGlow,
-    },
-    libraryRowChevron: {
-      marginTop: 4,
-      flexShrink: 0,
-    },
     libraryIcon: {
-      width: 38,
-      height: 38,
+      width: 44,
+      height: 44,
       alignItems: "center",
       justifyContent: "center",
       flexShrink: 0,
@@ -1491,25 +1803,16 @@ function createLibraryStyles(colors: ThemeColors) {
     },
     libraryName: {
       color: colors.text,
-      fontSize: 17,
-      fontWeight: "700",
-      lineHeight: 22,
+      fontSize: 16,
+      fontWeight: "600",
+      lineHeight: 21,
       flexShrink: 1,
-    },
-    libraryNameSelected: {
-      color: colors.primaryLight,
     },
     libraryModelId: {
       color: colors.textDim,
       fontSize: 12,
       lineHeight: 16,
       fontFamily: Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" }),
-      marginTop: 2,
-    },
-    libraryDownloadSize: {
-      color: colors.textMuted,
-      fontSize: 12,
-      lineHeight: 16,
       marginTop: 2,
     },
     libraryStats: { color: colors.textMuted, fontSize: 11, lineHeight: 15 },

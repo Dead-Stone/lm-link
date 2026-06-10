@@ -12,12 +12,18 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Markdown from "react-native-markdown-display";
 import ChatImageFrame from "./ChatImageFrame";
+import AssistantMessageMarkdown from "./AssistantMessageMarkdown";
 import ModelModeBadgeIcon from "./ModelModeBadgeIcon";
 import { SpeedStatRow } from "./ModelPicker";
 import { useSettings } from "../lib/context";
-import { ChatColors, getMarkdownStyles, ThemeColors, useTheme } from "../lib/theme";
+import {
+  formatMessageStatsLabel,
+  formatStreamingStatsLabel,
+  StreamingMessageStats,
+} from "../lib/message-stats";
+import { useSmoothStreamingText } from "../lib/use-smooth-streaming-text";
+import { ChatColors, ThemeColors, useTheme } from "../lib/theme";
 import { Message, MessageImage, ChatModelMode } from "../lib/types";
 
 const blurProps =
@@ -310,7 +316,7 @@ function createActionStyles(colors: ThemeColors) {
 interface Props {
   message: Message;
   isStreaming?: boolean;
-  streamingStats?: { tokensPerSec: number; totalTokens: number; elapsedMs: number };
+  streamingStats?: StreamingMessageStats;
   onCopy?: () => void;
   onEdit?: () => void;
   onRetry?: () => void;
@@ -324,7 +330,7 @@ function MessageBubble({ message, isStreaming, streamingStats, onCopy, onEdit, o
     () => createBubbleStyles(colors, chatColors),
     [colors, chatColors]
   );
-  const markdownStyles = useMemo(() => getMarkdownStyles(colors), [colors]);
+  const streamingText = useSmoothStreamingText(message.content, !!isStreaming);
 
   if (message.type === "model_change") {
     return (
@@ -365,47 +371,56 @@ function MessageBubble({ message, isStreaming, streamingStats, onCopy, onEdit, o
     );
   }
 
-  // Build stats string — only for completed assistant messages
-  const stats = message.stats;
-  let statsLabel: string | null = null;
-  if (stats && !isStreaming) {
-    const tps = stats.tokensPerSec.toFixed(1);
-    const tok = stats.totalTokens;
-    const total = (stats.totalTimeMs / 1000).toFixed(1);
-    statsLabel = `${tps} tok/s · ${tok} tokens · ${total}s`;
-  }
+  const statsLabel = isStreaming
+    ? streamingStats
+      ? formatStreamingStatsLabel(streamingStats)
+      : null
+    : message.stats
+      ? formatMessageStatsLabel(message.stats)
+      : null;
+
+  const showActions = !isStreaming && !!(onCopy || onRetry);
+  const showStats =
+    !!statsLabel || (isStreaming && streamingStats !== undefined && streamingStats !== null);
+  const displayStatsLabel = statsLabel ?? (isStreaming ? "…" : null);
 
   return (
     <View style={styles.assistantRow}>
-      <View style={styles.assistantBubble}>
-        {isStreaming ? (
-          <Text style={styles.streamingText}>{message.content}</Text>
-        ) : (
-          <Markdown style={markdownStyles}>{message.content}</Markdown>
-        )}
-        {isStreaming && (
-          <View style={styles.cursorRow}>
-            <BlinkingCursor />
-          </View>
-        )}
-      </View>
-      {!isStreaming && (statsLabel || onCopy || onRetry) ? (
-        <View style={styles.messageFooter}>
-          {statsLabel ? (
-            <SpeedStatRow
-              text={statsLabel}
+      <View style={styles.assistantColumn}>
+        <View style={styles.assistantBubble}>
+          {isStreaming || message.content ? (
+            <AssistantMessageMarkdown
+              content={isStreaming ? streamingText : message.content}
+              isStreaming={isStreaming}
               colors={colors}
-              textStyle={styles.statsText}
+              cursor={isStreaming ? <BlinkingCursor /> : undefined}
             />
           ) : null}
-          <MessageActions
-            variant="assistant"
-            onCopy={onCopy}
-            onRetry={onRetry}
-            colors={colors}
-          />
         </View>
-      ) : null}
+        {showActions || showStats ? (
+          <View style={styles.messageFooter}>
+            <View style={styles.footerDivider} />
+            <View style={styles.footerRow}>
+              {showStats && displayStatsLabel ? (
+                <SpeedStatRow
+                  text={displayStatsLabel}
+                  colors={colors}
+                  textStyle={styles.statsText}
+                  style={styles.statsRow}
+                />
+              ) : null}
+              {showActions ? (
+                <MessageActions
+                  variant="assistant"
+                  onCopy={onCopy}
+                  onRetry={onRetry}
+                  colors={colors}
+                />
+              ) : null}
+            </View>
+          </View>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -444,32 +459,47 @@ function createBubbleStyles(colors: ThemeColors, chat: ChatColors) {
     },
 
     assistantRow: {
-      flexDirection: "column",
+      flexDirection: "row",
       alignItems: "flex-start",
       marginBottom: 8,
       paddingHorizontal: 16,
     },
-    assistantBubble: {
+    assistantColumn: {
+      width: "100%",
       maxWidth: "92%",
+      alignSelf: "flex-start",
+      overflow: "hidden",
+    },
+    assistantBubble: {
+      width: "100%",
+      flexShrink: 1,
+      overflow: "hidden",
       paddingHorizontal: 4,
       paddingVertical: 2,
+      paddingBottom: 4,
       backgroundColor: "transparent",
     },
-    streamingText: {
-      color: colors.markdownBody,
-      fontSize: 15,
-      lineHeight: 22,
-    },
-    cursorRow: {
-      flexDirection: "row",
-      marginTop: 2,
-    },
     messageFooter: {
+      width: "100%",
+      flexShrink: 0,
+      marginTop: 6,
+      paddingHorizontal: 4,
+    },
+    footerDivider: {
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: colors.border,
+      marginBottom: 8,
+    },
+    footerRow: {
       flexDirection: "row",
       alignItems: "center",
-      marginTop: 4,
-      paddingHorizontal: 4,
-      gap: 4,
+      flexWrap: "wrap",
+      gap: 8,
+      minHeight: 28,
+    },
+    statsRow: {
+      flexShrink: 1,
+      minWidth: 0,
     },
     statsText: {
       color: colors.textDim,

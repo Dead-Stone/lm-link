@@ -68,6 +68,7 @@ export interface Settings {
   maxTokens: number;
   theme: "dark" | "light";
   apiKey?: string;              // active profile's API key (if any)
+  hfToken?: string;             // optional Hugging Face token (overrides EXPO_PUBLIC_HF_TOKEN)
   localServerUrl?: string;      // Mac LAN URL for model download/load (when using Hub for chat)
   /** Unload other models on Mac before loading a new one (default: true). */
   singleModelMode?: boolean;

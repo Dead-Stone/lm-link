@@ -20,14 +20,16 @@ import {
   formatLoadError,
   ejectRemoteModel,
   isHubUrl,
-  isRemoteModelLoaded,
+  isModelInMemory,
   loadRemoteModelOnSystem,
   partitionLibraryModels,
   resolveManagementApiKey,
   resolveManagementBaseUrl,
 } from "../lib/api";
+import { LIBRARY_PAGE_SIZE } from "../lib/library-pagination";
 import { isSameModelId, resolveCanonicalModelId } from "../lib/model-id";
 import { extractModelParamLabel, matchesModelSearchQuery, parseModelName } from "../lib/model-name";
+import { resolveEntryCatalogSource } from "../lib/library-filters";
 import { matchesLibrarySearch } from "../lib/library-search";
 import { isLmStudioMacDownloadModel } from "../lib/lmstudio-downloadable";
 import { useApp } from "../lib/context";
@@ -38,16 +40,23 @@ import {
   getQuickAccessRemoteLibrary,
   isModelInstalled,
   REMOTE_MODEL_LIBRARY,
+  LibraryDownloadSource,
   RemoteLibraryEntry,
   normalizeModelKey,
   resolveRemoteLibraryDisplayName,
 } from "../lib/remote-model-library";
 import { LMModel, ModelPlatform } from "../lib/types";
 import {
+  capabilityFilterLabel,
+  capabilityToModalityFilter,
+  remoteLibraryEntryHaystack,
+  modelMatchesCapabilityFilter,
   modelMatchesModalityFilter,
   modelModalityLabel,
+  ModelCapabilityFilter,
   ModelModality,
   ModelModalityFilter,
+  modelSupportsThinking,
   resolveModelModalities,
   resolveModelModalitiesFromModel,
 } from "../lib/vision-models";
@@ -148,14 +157,31 @@ export function trimModelStats(
   limit = MAX_MODEL_STATS
 ): ModelStatItem[] {
   const pinned = items.filter((item) => item.role === "param");
-  const rest = items.filter((item) => item.role !== "param" && item.role !== "size");
-  const restLimit = Math.max(limit - pinned.length, 0);
+  const capabilities = items.filter(
+    (item) => item.group === "modality" || item.group === "capability"
+  );
+  const rest = items.filter(
+    (item) =>
+      item.role !== "param" &&
+      item.role !== "size" &&
+      item.group !== "modality" &&
+      item.group !== "capability"
+  );
+  const restLimit = Math.max(limit - pinned.length - capabilities.length, 0);
   const trimmedRest = rest.slice(0, restLimit);
 
   const result: ModelStatItem[] = [];
+  let capabilitiesInserted = false;
   let pinnedInserted = false;
   for (const item of items) {
     if (item.role === "size") continue;
+    if (item.group === "modality" || item.group === "capability") {
+      if (!capabilitiesInserted) {
+        result.push(...capabilities);
+        capabilitiesInserted = true;
+      }
+      continue;
+    }
     if (item.role === "param") {
       if (!pinnedInserted) {
         result.push(...pinned);
@@ -166,6 +192,9 @@ export function trimModelStats(
     if (trimmedRest.includes(item)) {
       result.push(item);
     }
+  }
+  if (!capabilitiesInserted) {
+    result.push(...capabilities);
   }
   if (!pinnedInserted) {
     result.push(...pinned);
@@ -230,7 +259,7 @@ export function resolveRemoteModelTrait(modelId: string): ModelTrait | null {
   if (/r1|reason|think|o1|deepseek-r1/.test(hay)) {
     return { label: "Reasoning", color: "#f59e0b" };
   }
-  if (/vision|vlm|llava|moondream|gemma-3n/.test(hay)) {
+  if (/vision|vlm|llava|moondream|gemma-3n|gemma-4|multimodal|pixtral|qwen.*vl|internvl|moondream/.test(hay)) {
     return { label: "Vision", color: "#8b5cf6" };
   }
   if (/codellama|coder|starcoder|\bcode\b/.test(hay)) {
@@ -259,10 +288,10 @@ export function ModelTraitBadge({
       style={{
         flexDirection: "row",
         alignItems: "center",
-        gap: 3,
-        paddingHorizontal: 6,
-        paddingVertical: 2,
-        borderRadius: 6,
+        gap: 2,
+        paddingHorizontal: 5,
+        paddingVertical: 1,
+        borderRadius: 5,
         borderWidth: isDark ? 1 : 0,
         borderColor: isDark ? (muted ? colors.border : colors.primaryBorder) : undefined,
         backgroundColor: isDark
@@ -273,8 +302,8 @@ export function ModelTraitBadge({
         flexShrink: 0,
       }}
     >
-      <Ionicons name={icon} size={isSpeed ? SPEED_STAT_ICON_SIZE : 10} color={tint} />
-      <Text style={{ fontSize: 10, fontWeight: "700", color: tint }}>
+      <Ionicons name={icon} size={isSpeed ? SPEED_STAT_ICON_SIZE : 9} color={tint} />
+      <Text style={{ fontSize: 9, fontWeight: "700", color: tint, lineHeight: 11 }}>
         {shortenTraitLabel(trait.label)}
       </Text>
     </View>
@@ -306,9 +335,16 @@ export function SpeedStatRow({
   const labelStyle = StyleSheet.flatten([{ color: labelColor, fontSize: 12 }, textStyle]) as TextStyle;
 
   return (
-    <View style={[{ flexDirection: "row", alignItems: "center", gap: 3 }, style]}>
-      <Ionicons name={SPEED_STAT_ICON} size={iconSize} color={labelColor} />
-      <Text style={labelStyle}>{text}</Text>
+    <View style={[{ flexDirection: "row", alignItems: "center", gap: 3, minWidth: 0 }, style]}>
+      <Ionicons
+        name={SPEED_STAT_ICON}
+        size={iconSize}
+        color={labelColor}
+        style={{ flexShrink: 0 }}
+      />
+      <Text style={[labelStyle, { flexShrink: 1 }]} numberOfLines={1} ellipsizeMode="tail">
+        {text}
+      </Text>
     </View>
   );
 }
@@ -323,14 +359,67 @@ export function getModalityStatItem(modality: ModelModality): ModelStatItem {
   return { icon: "image-outline", label: "", modality };
 }
 
+export function getThinkingStatItem(
+  modelId: string,
+  options?: {
+    catalog?: Iterable<LMModel>;
+    modelType?: string | null;
+    badge?: string | null;
+  }
+): ModelStatItem | null {
+  if (
+    !modelSupportsThinking(
+      modelId,
+      options?.catalog ?? [],
+      options?.modelType,
+      options?.badge
+    )
+  ) {
+    return null;
+  }
+  return { icon: "bulb-outline", label: "", group: "capability" };
+}
+
 export function getModelModalityStatItems(
-  model: LMModel,
-  catalog: Iterable<LMModel> = []
+  modelId: string,
+  catalog: Iterable<LMModel> = [],
+  modelType?: string | null,
+  haystack?: string | null
 ): ModelStatItem[] {
-  return resolveModelModalitiesFromModel(model, catalog).map((modality) => ({
+  const modalities = resolveModelModalities(modelId, catalog, modelType, haystack);
+  return (modalities.length > 0 ? modalities : (["text"] as const)).map((modality) => ({
     ...getModalityStatItem(modality),
     group: "modality",
   }));
+}
+
+/** Text (Aa) · vision · video · thinking — shown first in model stat rows. */
+export function getModelCapabilityStatItems(
+  modelId: string,
+  options?: {
+    catalog?: Iterable<LMModel>;
+    modelType?: string | null;
+    badge?: string | null;
+    haystack?: string | null;
+  }
+): ModelStatItem[] {
+  const catalog = options?.catalog ?? [];
+  const thinkingId = options?.haystack ? `${modelId} ${options.haystack}` : modelId;
+  const modalities = getModelModalityStatItems(
+    modelId,
+    catalog,
+    options?.modelType,
+    options?.haystack
+  );
+  const thinking = getThinkingStatItem(thinkingId, options);
+  return [...modalities, ...(thinking ? [thinking] : [])];
+}
+
+export function getModelModalityStatItemsFromModel(
+  model: LMModel,
+  catalog: Iterable<LMModel> = []
+): ModelStatItem[] {
+  return getModelModalityStatItems(model.id, catalog, model.type);
 }
 
 export function getModelDetailItems(
@@ -430,14 +519,24 @@ export function getRemoteInstalledStatItems(
   const downloadSize = resolveRemoteDownloadSizeLabel(model, parsed);
   const paramLabel = resolveRemoteParamLabel(model, parsed);
   const chipLabel = resolveRemoteChipLabel(model, parsed, downloadSize, paramLabel);
-  const modalities = resolveModelModalitiesFromModel(model, catalog);
-  const modalityItems = (modalities.length > 0 ? modalities : (["text"] as const)).map(
-    (modality) => getModalityStatItem(modality)
-  );
+  const capabilityItems = getModelCapabilityStatItems(model.id, {
+    catalog,
+    modelType: model.type,
+    haystack: [
+      parsed.displayName,
+      parsed.family,
+      model.arch,
+      model.params_string,
+      model.publisher,
+      model.owned_by,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  });
 
   return [
     ...trimModelStats([
-      ...modalityItems,
+      ...capabilityItems,
       ...(paramLabel
         ? [{ icon: "hardware-chip-outline" as const, label: paramLabel, role: "param" as const }]
         : []),
@@ -455,12 +554,23 @@ export function getRemoteInstalledStatItems(
 export function filterRemoteLibraryCatalog(
   installedIds: string[],
   query: string,
-  modalityFilter: ModelModalityFilter = "all"
+  modalityFilter: ModelCapabilityFilter = "all"
 ): RemoteLibraryEntry[] {
   return REMOTE_MODEL_LIBRARY.filter((entry) => {
     if (!isLmStudioMacDownloadModel(entry.id)) return false;
     if (isModelInstalled(installedIds, entry.id)) return false;
-    if (!modelMatchesModalityFilter(entry.id, modalityFilter)) return false;
+    if (
+      !modelMatchesCapabilityFilter(
+        entry.id,
+        modalityFilter,
+        [],
+        undefined,
+        entry.badge,
+        remoteLibraryEntryHaystack(entry)
+      )
+    ) {
+      return false;
+    }
     return matchesLibrarySearch(
       [entry.id, entry.name, entry.publisher, entry.params, entry.description, entry.sizeLabel],
       query,
@@ -474,12 +584,16 @@ export function getRemoteLibraryEntryStatItems(entry: {
   publisher: string;
   params?: string;
   sizeLabel?: string;
+  description?: string;
+  downloads?: number;
+  downloadSource?: "lmstudio" | "huggingface";
+  badge?: string;
 }): ModelStatItem[] {
   const parsed = parseModelName(entry.id);
-  const modalities = resolveModelModalities(entry.id);
-  const modalityItems = (modalities.length > 0 ? modalities : (["text"] as const)).map(
-    (modality) => getModalityStatItem(modality)
-  );
+  const capabilityItems = getModelCapabilityStatItems(entry.id, {
+    badge: entry.badge,
+    haystack: remoteLibraryEntryHaystack(entry),
+  });
   const downloadSize = resolveFileSizeLabel(entry.sizeLabel, entry.id);
   const paramLabel =
     extractModelParamLabel(entry.params, entry.id, parsed.displayName) ??
@@ -491,7 +605,7 @@ export function getRemoteLibraryEntryStatItems(entry: {
 
   return [
     ...trimModelStats([
-      ...modalityItems,
+      ...capabilityItems,
       ...(paramLabel
         ? [{ icon: "hardware-chip-outline" as const, label: paramLabel, role: "param" as const }]
         : []),
@@ -506,8 +620,8 @@ export function getRemoteLibraryEntryStatItems(entry: {
   ];
 }
 
-const MODALITY_FILTER_OPTIONS: Array<{
-  id: ModelModalityFilter;
+const CAPABILITY_FILTER_OPTIONS: Array<{
+  id: ModelCapabilityFilter;
   label: string;
   icon?: keyof typeof Ionicons.glyphMap;
   glyph?: string;
@@ -516,7 +630,21 @@ const MODALITY_FILTER_OPTIONS: Array<{
   { id: "text", label: "", glyph: "Aa" },
   { id: "image", label: "", icon: "image-outline" },
   { id: "video", label: "", icon: "videocam-outline" },
+  { id: "thinking", label: "", icon: "bulb-outline" },
 ];
+
+function capabilityFilterAccent(
+  id: ModelCapabilityFilter,
+  colors: ThemeColors,
+  isDark: boolean,
+  accentPurple: string
+): string {
+  if (id === "image") return isDark ? "#93c5fd" : "#2563eb";
+  if (id === "video") return isDark ? "#fbbf24" : "#d97706";
+  if (id === "thinking") return isDark ? "#fbbf24" : "#d97706";
+  if (id === "text") return isDark ? colors.primaryLight : colors.textMuted;
+  return isDark ? colors.primaryLight : accentPurple;
+}
 
 export function ModelModalityFilters({
   selected,
@@ -524,8 +652,8 @@ export function ModelModalityFilters({
   colors,
   style,
 }: {
-  selected: ModelModalityFilter;
-  onChange: (filter: ModelModalityFilter) => void;
+  selected: ModelCapabilityFilter;
+  onChange: (filter: ModelCapabilityFilter) => void;
   colors: ThemeColors;
   style?: object;
 }) {
@@ -535,20 +663,10 @@ export function ModelModalityFilters({
   return (
     <View style={[styles.wrap, style]}>
       <View style={styles.bar}>
-        {MODALITY_FILTER_OPTIONS.map((opt) => {
+        {CAPABILITY_FILTER_OPTIONS.map((opt) => {
           const isSelected = opt.id === selected;
           const accentColor = isSelected
-            ? opt.id === "image"
-              ? isDark
-                ? "#93c5fd"
-                : "#2563eb"
-              : opt.id === "video"
-                ? isDark
-                  ? "#fbbf24"
-                  : "#d97706"
-                : isDark
-                  ? colors.primaryLight
-                  : accent.purple
+            ? capabilityFilterAccent(opt.id, colors, isDark, accent.purple)
             : isDark
               ? colors.textDim
               : colors.textMuted;
@@ -558,7 +676,12 @@ export function ModelModalityFilters({
               key={opt.id}
               onPress={() => onChange(opt.id)}
               accessibilityLabel={
-                opt.label || (opt.id === "all" ? "All" : modelModalityLabel(opt.id))
+                opt.label ||
+                (opt.id === "all"
+                  ? "All"
+                  : opt.id === "thinking"
+                    ? "Thinking"
+                    : modelModalityLabel(opt.id))
               }
               style={({ pressed }) => [
                 styles.chip,
@@ -700,6 +823,18 @@ export function ModelStatLine({
                   color={modalityAccentColor(item.modality, colors, muted, isDark)}
                 />
               ) : null
+            ) : item.group === "capability" && item.icon === "bulb-outline" ? (
+              <Ionicons
+                name="bulb-outline"
+                size={MODALITY_ICON_SIZE}
+                color={
+                  muted
+                    ? baseTextColor
+                    : isDark
+                      ? "#fbbf24"
+                      : "#d97706"
+                }
+              />
             ) : (
               <>
                 {item.glyph ? (
@@ -789,8 +924,50 @@ export function ModelStatLine({
   );
 }
 
+export function statItemsWithoutSize(items: ModelStatItem[]): ModelStatItem[] {
+  return items.filter((item) => item.role !== "size");
+}
+
+export function sizeLabelFromStatItems(items: ModelStatItem[]): string | null {
+  const item = items.find((entry) => entry.role === "size" && entry.label);
+  return item?.label ?? null;
+}
+
+export function LibraryRowSizeLabel({
+  label,
+  colors,
+  style,
+}: {
+  label: string | null | undefined;
+  colors: ThemeColors;
+  style?: TextStyle;
+}) {
+  if (!label) return null;
+  return (
+    <Text
+      style={[
+        {
+          color: colors.textMuted,
+          fontSize: 13,
+          fontWeight: "600",
+          lineHeight: 16,
+          flexShrink: 0,
+          textAlign: "right",
+          minWidth: 48,
+          alignSelf: "center",
+        },
+        style,
+      ]}
+      numberOfLines={1}
+    >
+      {label}
+    </Text>
+  );
+}
+
 export function LibraryCatalogRow({
   platform,
+  modelId,
   provider,
   name,
   trait,
@@ -799,8 +976,11 @@ export function LibraryCatalogRow({
   disabled,
   colors,
   rowStyles: rowStylesProp,
+  iconMonochrome = false,
+  catalogSource = null,
 }: {
   platform: ModelPlatform;
+  modelId?: string;
   provider: string;
   name: string;
   trait: ModelTrait | null;
@@ -809,6 +989,8 @@ export function LibraryCatalogRow({
   disabled?: boolean;
   colors: ThemeColors;
   rowStyles?: ReturnType<typeof createRowStyles>;
+  iconMonochrome?: boolean;
+  catalogSource?: LibraryDownloadSource | null;
 }) {
   const internalRowStyles = useMemo(() => createRowStyles(colors), [colors]);
   const rowStyles = rowStylesProp ?? internalRowStyles;
@@ -818,11 +1000,13 @@ export function LibraryCatalogRow({
       <View style={rowStyles.catalogIcon}>
         <ModelModeBadgeIcon
           platform={platform}
+          modelId={modelId}
           provider={provider}
           label={name}
-          size={22}
+          size={26}
           color={colors.textMuted}
-          monochrome
+          monochrome={iconMonochrome}
+          catalogSource={catalogSource}
         />
       </View>
       <View style={rowStyles.catalogBody}>
@@ -869,7 +1053,7 @@ function ModelRow({
   deleting,
   managementActionsDisabled,
   modelCatalog,
-  monochromeIcons = false,
+  greyUnselectedIcons = false,
 }: {
   model: LMModel;
   isCurrent: boolean;
@@ -890,15 +1074,16 @@ function ModelRow({
   deleting?: boolean;
   managementActionsDisabled?: boolean;
   modelCatalog?: LMModel[];
-  monochromeIcons?: boolean;
+  /** Grey platform shell + brand logo on unselected rows (model picker). */
+  greyUnselectedIcons?: boolean;
 }) {
   const { displayName } = parseModelName(model.id);
   const detailItems = getRemoteInstalledStatItems(model, modelCatalog);
   const trait = resolveRemoteModelTrait(model.id);
   const iconColor = isCurrent ? colors.primaryLight : colors.textDim;
-  const iconMonochrome = monochromeIcons || !isCurrent;
-  const traitMuted = monochromeIcons || !isCurrent;
-  const badgeSize = libraryLayout ? 20 : 22;
+  const iconMonochrome = greyUnselectedIcons && !isCurrent;
+  const traitMuted = !isCurrent;
+  const badgeSize = 26;
 
   const pct =
     loadProgress !== undefined
@@ -1066,8 +1251,8 @@ function SectionHeader({
 
 // ─── Shared remote model list (chat + settings) ───────────────────────────────
 
-export const LIBRARY_INSTALLED_PAGE_SIZE = 3;
-export const LIBRARY_DOWNLOAD_PAGE_SIZE = 10;
+export const LIBRARY_INSTALLED_PAGE_SIZE = LIBRARY_PAGE_SIZE;
+export const LIBRARY_DOWNLOAD_PAGE_SIZE = LIBRARY_PAGE_SIZE;
 
 export function LibrarySeeMoreButton({
   onPress,
@@ -1136,7 +1321,6 @@ export function RemoteModelList({
   serverUrl,
   loadOnSelect = false,
   useSettingsDefault = false,
-  monochromeIcons = false,
   platform,
   activeLoadingModelId,
   activeLoadingProgress,
@@ -1154,6 +1338,7 @@ export function RemoteModelList({
   onActionComplete,
   onOpenLibrary,
   quickAccessCatalog = false,
+  greyUnselectedIcons = false,
 }: {
   active: boolean;
   selectedModelId?: string;
@@ -1173,8 +1358,6 @@ export function RemoteModelList({
   loadOnSelect?: boolean;
   /** Fall back to settings.defaultModel when selectedModelId is empty. */
   useSettingsDefault?: boolean;
-  /** Neutral-toned provider logos (model library). */
-  monochromeIcons?: boolean;
   /** Override platform icon (e.g. Mac library always uses PC). */
   platform?: ModelPlatform;
   /** Parent-driven load state (e.g. chat model picker). */
@@ -1192,14 +1375,16 @@ export function RemoteModelList({
   managementActionsDisabled?: boolean;
   /** Show All / Text / Images / Video filter chips above the list. */
   showModalityFilters?: boolean;
-  modalityFilter?: ModelModalityFilter;
-  onModalityFilterChange?: (filter: ModelModalityFilter) => void;
+  modalityFilter?: ModelCapabilityFilter;
+  onModalityFilterChange?: (filter: ModelCapabilityFilter) => void;
   /** Called after a library load/eject action finishes (e.g. close chat picker). */
   onActionComplete?: () => void;
   /** Chat picker: catalog rows open the library instead of selecting. */
   onOpenLibrary?: () => void;
   /** Chat picker: curated download rows at the top instead of search + full catalog. */
   quickAccessCatalog?: boolean;
+  /** Grey platform shell + brand logo on unselected rows (model picker). */
+  greyUnselectedIcons?: boolean;
 }) {
   const { settings, updateSettings, account } = useApp();
   const colors = useAccentPalette();
@@ -1214,7 +1399,7 @@ export function RemoteModelList({
   const [showAll, setShowAll] = useState(false);
   const [installedVisibleCount, setInstalledVisibleCount] = useState(LIBRARY_INSTALLED_PAGE_SIZE);
   const [internalModalityFilter, setInternalModalityFilter] =
-    useState<ModelModalityFilter>("all");
+    useState<ModelCapabilityFilter>("all");
   const modalityFilter = controlledModalityFilter ?? internalModalityFilter;
   const setModalityFilter = onModalityFilterChange ?? setInternalModalityFilter;
   const [loadingModelId, setLoadingModelId] = useState<string | null>(null);
@@ -1282,9 +1467,22 @@ export function RemoteModelList({
 
   const filteredModels = useMemo(() => {
     const q = effectiveSearch.trim().toLowerCase();
-    let filtered = models.filter((m) =>
-      modelMatchesModalityFilter(m.id, modalityFilter, models, m.type)
-    );
+    let filtered = models.filter((m) => {
+      const parsed = parseModelName(m.id);
+      const haystack = [
+        m.id,
+        parsed.displayName,
+        parsed.family,
+        m.arch,
+        m.type,
+        m.params_string,
+        m.publisher,
+        m.owned_by,
+      ]
+        .filter(Boolean)
+        .join(" ");
+      return modelMatchesCapabilityFilter(m.id, modalityFilter, models, m.type, null, haystack);
+    });
 
     filtered = q
       ? filtered.filter((m) => {
@@ -1370,16 +1568,16 @@ export function RemoteModelList({
     if (!libraryLayout) return { loaded: [] as LMModel[], installed: [] as LMModel[] };
     return partitionLibraryModels(libraryModels, {
       activeModelId: effectiveSelectedId,
-      preferActiveInLoaded: !!onOpenLibrary,
+      singleModelMode: settings.singleModelMode !== false,
     });
-  }, [libraryModels, libraryLayout, effectiveSelectedId, onOpenLibrary]);
+  }, [libraryModels, libraryLayout, effectiveSelectedId, settings.singleModelMode]);
 
   const installedIds = useMemo(() => models.map((model) => model.id), [models]);
 
   const catalogEntries = useMemo(() => {
     if (!libraryLayout || !onOpenLibrary || browseMode) return [];
     if (quickAccessCatalog) {
-      return getQuickAccessRemoteLibrary(installedIds);
+      return getQuickAccessRemoteLibrary(installedIds, modalityFilter);
     }
     return filterRemoteLibraryCatalog(installedIds, effectiveSearch, modalityFilter);
   }, [
@@ -1536,12 +1734,12 @@ export function RemoteModelList({
       colors={colors}
       libraryLayout={libraryLayout}
       onLoad={
-        libraryLayout && !browseOnly && !isRemoteModelLoaded(item)
+        libraryLayout && !browseOnly && !isModelInMemory(item)
           ? () => handleSelect(item.id)
           : undefined
       }
       onEject={
-        libraryLayout && !browseOnly && isRemoteModelLoaded(item)
+        libraryLayout && !browseOnly && isModelInMemory(item)
           ? () => void performEject(item)
           : undefined
       }
@@ -1551,7 +1749,7 @@ export function RemoteModelList({
       deleting={deletingModelId === item.id}
       managementActionsDisabled={managementActionsDisabled}
       modelCatalog={models}
-      monochromeIcons={monochromeIcons}
+      greyUnselectedIcons={greyUnselectedIcons}
     />
   );
 
@@ -1569,8 +1767,8 @@ export function RemoteModelList({
             {effectiveSearch.trim() ? "No models match your search" : "No models match your filters"}
           </Text>
           <Text style={[styles.centerText, { textAlign: "center", maxWidth: 280 }]}>
-            {modalityFilter === "image" || modalityFilter === "video"
-              ? "Try Text or All, or search for a different model."
+            {modalityFilter !== "all"
+              ? `Try All or another capability, or search for a different ${capabilityFilterLabel(modalityFilter) || "model"}.`
               : "Try a different name, provider, or size."}
           </Text>
         </View>
@@ -1646,6 +1844,7 @@ export function RemoteModelList({
             <LibraryCatalogRow
               key={entry.id}
               platform={remotePlatform}
+              modelId={entry.id}
               provider={entry.publisher}
               name={resolveRemoteLibraryDisplayName(entry)}
               trait={
@@ -1657,6 +1856,8 @@ export function RemoteModelList({
               onDownload={onOpenLibrary}
               rowStyles={rowStyles}
               colors={colors}
+              iconMonochrome={greyUnselectedIcons}
+              catalogSource={resolveEntryCatalogSource(entry)}
             />
           ))}
         </View>
@@ -1819,7 +2020,7 @@ export function RemoteModelList({
                 {effectiveSearch.trim()
                   ? `No results for "${effectiveSearch}"`
                   : modalityFilter !== "all"
-                    ? `No ${modalityFilter === "image" ? "image-capable" : modalityFilter === "video" ? "video-capable" : "text-only"} models match your filters.`
+                    ? `No ${capabilityFilterLabel(modalityFilter) || "matching"} models match your filters.`
                     : "No models installed yet — download one below."}
               </Text>
             </View>
@@ -1831,7 +2032,7 @@ export function RemoteModelList({
               {effectiveSearch.trim()
                 ? `No results for "${effectiveSearch}"`
                 : modalityFilter !== "all"
-                  ? `No ${modalityFilter === "image" ? "image-capable" : modalityFilter === "video" ? "video-capable" : "text-only"} models match your filters.`
+                  ? `No ${capabilityFilterLabel(modalityFilter) || "matching"} models match your filters.`
                   : "No models match your filters."}
             </Text>
           </View>
@@ -2090,8 +2291,8 @@ function createRowStyles(colors: ThemeColors) {
     actionBtnDisabled: { opacity: 0.45 },
     actionBtnPressed: { opacity: 0.7 },
     modelIcon: {
-      width: 38,
-      height: 38,
+      width: 44,
+      height: 44,
       borderRadius: 10,
       alignItems: "center",
       justifyContent: "center",
@@ -2113,7 +2314,7 @@ function createRowStyles(colors: ThemeColors) {
       flexDirection: "row",
       alignItems: "center",
       gap: 8,
-      marginLeft: 50,
+      marginLeft: 56,
       marginTop: 2,
       marginBottom: 6,
       paddingRight: 4,
@@ -2126,7 +2327,7 @@ function createRowStyles(colors: ThemeColors) {
       fontWeight: "500",
     },
     loadLineError: {
-      marginLeft: 50,
+      marginLeft: 56,
       marginTop: 2,
       marginBottom: 6,
       paddingRight: 4,
@@ -2155,8 +2356,8 @@ function createRowStyles(colors: ThemeColors) {
       borderRadius: radii.sm,
     },
     libraryIcon: {
-      width: 38,
-      height: 38,
+      width: 44,
+      height: 44,
       alignItems: "center",
       justifyContent: "center",
       flexShrink: 0,
@@ -2173,13 +2374,13 @@ function createRowStyles(colors: ThemeColors) {
       flexDirection: "row",
       alignItems: "center",
       gap: 8,
-      marginLeft: 48,
+      marginLeft: 54,
       marginTop: -4,
       marginBottom: 6,
       paddingRight: 4,
     },
     libraryLoadError: {
-      marginLeft: 48,
+      marginLeft: 54,
       marginTop: -4,
       marginBottom: 6,
       paddingRight: 4,
@@ -2194,8 +2395,8 @@ function createRowStyles(colors: ThemeColors) {
       marginBottom: 2,
     },
     catalogIcon: {
-      width: 38,
-      height: 38,
+      width: 44,
+      height: 44,
       alignItems: "center",
       justifyContent: "center",
       flexShrink: 0,

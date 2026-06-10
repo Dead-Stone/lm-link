@@ -53,6 +53,7 @@
     "react-native-zeroconf": "^0.14.0"
   },
   "devDependencies": {
+    "simple-icons": "^16.23.0",
     "@types/react": "~19.1.10",
     "canvas": "^3.2.3",
     "jsdom": "^29.1.1",
@@ -78,6 +79,7 @@
     "web": "expo start --web",
     "install-llama-rn": "node scripts/install-llama-rn.js",
     "compose-brand-icons": "node scripts/compose-brand-icons.mjs",
+    "sync-brand-logos": "node scripts/sync-brand-logos.mjs",
     "compose-readme-hero": "node scripts/compose-readme-hero.mjs",
     "eas-build-post-install": "node scripts/install-llama-rn.js && node scripts/write-android-local-properties.js",
     "build:apk:local": "bash scripts/build-android-local.sh preview",

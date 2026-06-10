@@ -153,6 +153,10 @@ export function createModalTheme(colors: ThemeColors) {
     },
     sheetCancelText: { color: colors.textMuted, fontSize: 16, fontWeight: "500" },
 
+    sheetOverlayRoot: {
+      flex: 1,
+      backgroundColor: "transparent",
+    },
     pageContainer: { flex: 1, backgroundColor: colors.bgElevated },
     pageHandleWrap: { alignItems: "center", paddingTop: 8, paddingBottom: 2 },
     pageHandle: {

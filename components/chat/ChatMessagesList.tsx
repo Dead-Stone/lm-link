@@ -3,13 +3,8 @@ import React, { memo, useCallback } from "react";
 import { Platform, StyleSheet, View } from "react-native";
 import MessageBubble from "../MessageBubble";
 import TypingIndicator from "../TypingIndicator";
+import { StreamingMessageStats } from "../../lib/message-stats";
 import { isChatMessage, Message } from "../../lib/types";
-
-type StreamingStats = {
-  tokensPerSec: number;
-  totalTokens: number;
-  elapsedMs: number;
-};
 
 export type ChatMessageRowProps = {
   message: Message;
@@ -52,7 +47,7 @@ type Props = {
   messages: Message[];
   streamingContent: string;
   showTypingIndicator: boolean;
-  liveStats?: StreamingStats | null;
+  streamingStats?: StreamingMessageStats | null;
   bottomInset?: number;
   onContentSizeChange?: () => void;
   listRef: React.RefObject<FlashListRef<Message> | null>;
@@ -66,7 +61,7 @@ function ChatMessagesList({
   messages,
   streamingContent,
   showTypingIndicator,
-  liveStats,
+  streamingStats,
   bottomInset = 0,
   onContentSizeChange,
   listRef,
@@ -114,7 +109,7 @@ function ChatMessagesList({
                   createdAt: Date.now(),
                 }}
                 isStreaming
-                streamingStats={liveStats ?? undefined}
+                streamingStats={streamingStats ?? undefined}
               />
             ) : null}
             {showTypingIndicator ? (

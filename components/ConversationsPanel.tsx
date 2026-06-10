@@ -13,12 +13,11 @@ import {
 import { FlatList } from "react-native-gesture-handler";
 import Swipeable from "react-native-gesture-handler/Swipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import DismissAffordance from "../components/DismissAffordance";
-import NewChatIcon from "../components/NewChatIcon";
-import ThemedConfirmDialog from "../components/ThemedConfirmDialog";
-import SwipeDismissSheet from "../components/SwipeDismissSheet";
-import TransparentSheet from "../components/TransparentSheet";
+import DismissAffordance from "./DismissAffordance";
+import NewChatIcon from "./NewChatIcon";
+import ThemedConfirmDialog from "./ThemedConfirmDialog";
 import { useApp } from "../lib/context";
+import { useHubNavigation } from "../lib/hub-navigation";
 import { createScreenHeaderTitleStyle } from "../lib/typography";
 import { AccentColors, getSettingsPalette, radii, ThemeColors, useTheme } from "../lib/theme";
 import { Conversation } from "../lib/types";
@@ -107,7 +106,6 @@ function ConversationRow({
 const emptyChatsAnimation = require("../assets/4622bae4-1188-11ee-a0e0-2f7bad465cc0.json");
 
 function getEmptyLottieColorFilters(isDark: boolean, palette: ThemeColors, accent: AccentColors) {
-  // Light purple in both themes — extra lift in dark mode on frosted glass.
   const faceInk = isDark ? palette.lmCenter : accent.purple;
   const layers = ["Left Eye", "Right Eye", "Smile Lip"];
   return layers.flatMap((layer) => [
@@ -197,8 +195,9 @@ function EmptyConversations({
   );
 }
 
-export default function ConversationsScreen() {
+export default function ConversationsPanel() {
   const router = useRouter();
+  const { openChat } = useHubNavigation();
   const insets = useSafeAreaInsets();
   const { conversations, removeConversation, activeConversation } = useApp();
   const { colors, accent, isDark } = useTheme();
@@ -206,16 +205,18 @@ export default function ConversationsScreen() {
   const styles = useMemo(() => createListStyles(palette, accent), [palette, accent]);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
 
-  const openChat = useCallback(
+  const openChatRoute = useCallback(
     (chatId: string) => {
-      router.dismissTo(`/chat/${chatId}`);
+      openChat();
+      router.replace(`/chat/${chatId}` as `/chat/${string}`);
     },
-    [router]
+    [openChat, router]
   );
 
   const openNewChat = useCallback(() => {
-    router.dismissTo("/chat/new");
-  }, [router]);
+    openChat();
+    router.replace("/chat/new");
+  }, [openChat, router]);
 
   const handleDelete = useCallback((id: string, title: string) => {
     setDeleteTarget({ id, title });
@@ -231,71 +232,61 @@ export default function ConversationsScreen() {
   }, [openNewChat]);
 
   return (
-    <TransparentSheet>
-      <SwipeDismissSheet direction="left" style={styles.screen}>
-        <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-          <View style={styles.headerBtn} />
-          <Text style={styles.headerTitle}>Chats</Text>
-          <DismissAffordance
-            kind="right"
-            colors={colors}
-            onPress={() => {
-              if (router.canGoBack()) router.back();
-            }}
-          />
-        </View>
+    <View style={styles.screen}>
+      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <View style={styles.headerBtn} />
+        <Text style={styles.headerTitle}>Chats</Text>
+        <DismissAffordance kind="right" colors={colors} onPress={openChat} />
+      </View>
 
-        {conversations.length === 0 ? (
-          <EmptyConversations
-            onNewChat={openNewChat}
-            styles={styles}
-            iconColor={colors.textMuted}
-            bottomInset={insets.bottom}
-          />
-        ) : (
-          <FlatList
-            style={styles.list}
-            data={conversations}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.listContent}
-            keyboardDismissMode="on-drag"
-            showsVerticalScrollIndicator={false}
-            renderItem={({ item }) => (
-              <ConversationRow
-                item={item}
-                isActive={item.id === activeConversation?.id}
-                onPress={() => openChat(item.id)}
-                onDelete={() => handleDelete(item.id, item.title)}
-              />
-            )}
-            ListFooterComponent={
-              <NewChatFooter
-                onPress={handleNewChat}
-                styles={styles}
-                iconColor={colors.textMuted}
-                bottomInset={insets.bottom}
-                showDeleteHint
-              />
-            }
-          />
-        )}
-
-        <ThemedConfirmDialog
-          visible={deleteTarget !== null}
-          title="Delete Conversation"
-          message={
-            deleteTarget
-              ? `Delete "${deleteTarget.title}"? This cannot be undone.`
-              : ""
-          }
-          confirmLabel="Delete"
-          cancelLabel="Cancel"
-          destructive
-          onConfirm={confirmDelete}
-          onCancel={() => setDeleteTarget(null)}
+      {conversations.length === 0 ? (
+        <EmptyConversations
+          onNewChat={openNewChat}
+          styles={styles}
+          iconColor={colors.textMuted}
+          bottomInset={insets.bottom}
         />
-      </SwipeDismissSheet>
-    </TransparentSheet>
+      ) : (
+        <FlatList
+          style={styles.list}
+          data={conversations}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContent}
+          keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator={false}
+          renderItem={({ item }) => (
+            <ConversationRow
+              item={item}
+              isActive={item.id === activeConversation?.id}
+              onPress={() => openChatRoute(item.id)}
+              onDelete={() => handleDelete(item.id, item.title)}
+            />
+          )}
+          ListFooterComponent={
+            <NewChatFooter
+              onPress={handleNewChat}
+              styles={styles}
+              iconColor={colors.textMuted}
+              bottomInset={insets.bottom}
+              showDeleteHint
+            />
+          }
+        />
+      )}
+
+      <ThemedConfirmDialog
+        visible={deleteTarget !== null}
+        title="Delete Conversation"
+        message={
+          deleteTarget ? `Delete "${deleteTarget.title}"? This cannot be undone.` : ""
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        destructive
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
+    </View>
   );
 }
 
@@ -304,6 +295,7 @@ function createListStyles(colors: ThemeColors, accent: AccentColors) {
     screen: {
       flex: 1,
       justifyContent: "flex-start",
+      backgroundColor: colors.bg,
     },
     header: {
       paddingBottom: 14,
@@ -313,7 +305,7 @@ function createListStyles(colors: ThemeColors, accent: AccentColors) {
       justifyContent: "space-between",
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: colors.border,
-      backgroundColor: "transparent",
+      backgroundColor: colors.bg,
     },
     headerBtn: {
       width: 36,
@@ -404,7 +396,6 @@ function createListStyles(colors: ThemeColors, accent: AccentColors) {
       justifyContent: "center",
       alignItems: "center",
     },
-
   });
 }
 

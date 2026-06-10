@@ -1,6 +1,7 @@
+import { Redirect } from "expo-router";
 import React from "react";
-import FirstLaunchTutorial from "../components/FirstLaunchTutorial";
 
+/** Legacy route — first-launch tutorial is a glass overlay on /chat. */
 export default function OnboardingScreen() {
-  return <FirstLaunchTutorial mode="onboarding" onComplete={() => {}} />;
+  return <Redirect href="/chat" />;
 }

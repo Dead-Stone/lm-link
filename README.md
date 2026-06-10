@@ -112,7 +112,7 @@ npx expo start
 | Production AAB (local) | `npm run build:aab:local` → `builds/` |
 | Production AAB (EAS cloud) | `npm run build:aab` |
 
-Patches under [`patches/`](patches/) are applied automatically on `npm install`. Regenerate the README hero (`assets/readme-hero.gif`) from `assets/android-face-overlay.json` with `npm run compose-readme-hero`. See [CONTRIBUTING.md](CONTRIBUTING.md) for code style and PR workflow.
+Patches under [`patches/`](patches/) are applied automatically on `npm install`. Regenerate the README hero (`assets/readme-hero.gif`) from `assets/android-face-overlay.json` with `npm run compose-readme-hero` (requires [gifsicle](https://www.lcdf.org/gifsicle/): `brew install gifsicle`). See [CONTRIBUTING.md](CONTRIBUTING.md) for code style and PR workflow.
 
 ### Tech stack
 

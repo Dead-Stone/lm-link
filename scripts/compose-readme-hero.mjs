@@ -3,7 +3,9 @@
  * Matches AppOpeningAnimation: masked logo with animated Android head on top.
  * Output: assets/readme-hero.gif
  */
+import { execFileSync } from "child_process";
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
@@ -210,10 +212,54 @@ for (let i = 0; i < HOLD_FRAMES; i++) {
   frames.push(finalFrame);
 }
 
-await sharp(frames, { join: { animated: true } })
-  .gif({ loop: 0, delay: frames.map(() => FRAME_DELAY) })
-  .toFile(path.join(OUT, "readme-hero.gif"));
+/** Build a GitHub-safe animated GIF (220×220 logical screen, frames at 0,0). */
+async function writeAnimatedGifWithGifsicle(pngPaths, outPath, tmpDir) {
+  const delayCentisecs = Math.max(1, Math.round(FRAME_DELAY / 10));
+  const gifPaths = [];
 
+  for (let i = 0; i < pngPaths.length; i++) {
+    const gifPath = path.join(tmpDir, `frame-${String(i).padStart(3, "0")}.gif`);
+    await sharp(pngPaths[i]).gif().toFile(gifPath);
+    gifPaths.push(gifPath);
+  }
+
+  try {
+    execFileSync(
+      "gifsicle",
+      [
+        "--delay",
+        String(delayCentisecs),
+        "--loopcount",
+        "--disposal",
+        "2",
+        ...gifPaths,
+        "-o",
+        outPath,
+      ],
+      { stdio: "pipe" }
+    );
+  } catch (err) {
+    const detail = err?.stderr?.toString?.().trim();
+    throw new Error(
+      `gifsicle failed while building readme-hero.gif${detail ? `: ${detail}` : ""}. Install with: brew install gifsicle`
+    );
+  }
+}
+
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "readme-hero-"));
+const framePaths = [];
+for (let i = 0; i < frames.length; i++) {
+  const framePath = path.join(tmpDir, `frame-${String(i).padStart(3, "0")}.png`);
+  fs.writeFileSync(framePath, frames[i]);
+  framePaths.push(framePath);
+}
+
+const outPath = path.join(OUT, "readme-hero.gif");
+await writeAnimatedGifWithGifsicle(framePaths, outPath, tmpDir);
+fs.rmSync(tmpDir, { recursive: true, force: true });
+
+const meta = await sharp(outPath, { animated: true }).metadata();
+const pages = meta.pages ?? 1;
 console.log(
-  `readme-hero.gif: ${CANVAS}px, ${frames.length} frames (Lottie 0–${LOTTIE_END_FRAME}, step ${FRAME_STEP})`
+  `readme-hero.gif: ${meta.width}x${meta.pageHeight ?? meta.height}, ${pages} frames (Lottie 0–${LOTTIE_END_FRAME}, step ${FRAME_STEP})`
 );

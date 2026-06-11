@@ -34,6 +34,7 @@ import {
   ejectOnDeviceModel,
   getLocalModelByKey,
   getLoadedOnDeviceModelKey,
+  getLoadingOnDeviceModelKey,
   isModelDownloaded,
   subscribeOnDeviceModelLoaded,
   waitForOnDeviceModelLoaded,
@@ -47,6 +48,7 @@ import {
   ejectRemoteModel,
   fetchModels,
   getEffectiveLocalServerUrl,
+  isModelLoading,
   normalizeServiceUrl,
   partitionLibraryModels,
   resolveManagementApiKey,
@@ -71,7 +73,14 @@ import { createModalTheme } from "../lib/modal-theme";
 import { modalPageTopPadding } from "../lib/safe-area-layout";
 import SheetSwipeHint, { SHEET_SWIPE_HINT_BAND } from "./SheetSwipeHint";
 import SwipeDismissSheet, { SwipeDismissSheetHandle } from "./SwipeDismissSheet";
-import { getSettingsPalette, radii, ThemeColors, useTheme } from "../lib/theme";
+import {
+  getLoadedDeckGlowColor,
+  getLoadedDeckLoadFillColor,
+  getSettingsPalette,
+  radii,
+  ThemeColors,
+  useTheme,
+} from "../lib/theme";
 import ThemedError from "./ThemedError";
 import { getLocalModelStatItems } from "./LocalModelsSection";
 import { AnimatedLibraryRow } from "./LibraryModelSections";
@@ -125,6 +134,8 @@ function getLocalModelDetailItems(model: LocalModelInfo, ready: boolean) {
 }
 
 const LOADED_DECK_ICON_SIZE = 78;
+/** Pressable width — room for corner catalog-source badge + wifi badge. */
+const LOADED_DECK_ICON_BUTTON_WIDTH = LOADED_DECK_ICON_SIZE + 32;
 /** Loaded deck shows this many slots in the viewport; sideways scroll advances one slot at a time. */
 const LOADED_DECK_VISIBLE_SLOTS = 2;
 const LOADED_DECK_GLOW_SIZE = LOADED_DECK_ICON_SIZE + 20;
@@ -144,6 +155,13 @@ const LOADED_DECK_RADIAL_GLOW_LAYERS = [
   { scale: 0.5, alpha: 0.24 },
   { scale: 0.32, alpha: 0.38 },
 ] as const;
+
+const LOADED_DECK_PRESENT_MS = 360;
+const LOADED_DECK_IDLE_MS = 280;
+const LOADED_DECK_CATALOG_POLL_MS = 1800;
+const LOADED_DECK_CATALOG_POLL_FAST_MS = 450;
+
+type RemoteDeckPhase = "empty" | "loading" | "loaded";
 
 function resolveDeckCatalogSource(
   platform: ModelPlatform,
@@ -243,9 +261,40 @@ function resolveRemoteLoadedModel(
   return loaded[0] ?? null;
 }
 
+function resolveRemoteDeckState(
+  catalog: LMModel[],
+  activeModelId: string | null,
+  singleModelMode: boolean,
+  pendingModelId?: string | null
+): { model: LMModel | null; phase: RemoteDeckPhase; displayId: string | null } {
+  const loaded = resolveRemoteLoadedModel(catalog, activeModelId, singleModelMode);
+  if (loaded) {
+    return { model: loaded, phase: "loaded", displayId: loaded.id };
+  }
+
+  const selectable = catalog.filter((model) => isChatSelectableLmModel(model));
+  const loadingModels = selectable.filter((model) => isModelLoading(model));
+  if (loadingModels.length > 0) {
+    const pending = pendingModelId?.trim();
+    const preferred =
+      (pending
+        ? loadingModels.find((model) => isSameModelId(model.id, pending))
+        : undefined) ?? loadingModels[0];
+    return { model: preferred, phase: "loading", displayId: preferred.id };
+  }
+
+  const pending = pendingModelId?.trim();
+  if (pending) {
+    return { model: null, phase: "loading", displayId: pending };
+  }
+
+  return { model: null, phase: "empty", displayId: null };
+}
+
 function LoadedModelDeckIcon({
   platform,
   present,
+  loading,
   ejecting,
   pulseToken,
   badgeModelId,
@@ -253,11 +302,13 @@ function LoadedModelDeckIcon({
   label,
   catalogSource,
   networkLinked,
+  isDark,
   colors,
   styles,
 }: {
   platform: ModelPlatform;
   present: boolean;
+  loading?: boolean;
   ejecting?: boolean;
   pulseToken?: number;
   badgeModelId: string | null;
@@ -265,15 +316,18 @@ function LoadedModelDeckIcon({
   label: string | null;
   catalogSource: LibraryDownloadSource | null;
   networkLinked: boolean;
+  isDark: boolean;
   colors: ThemeColors;
   styles: ReturnType<typeof createStyles>;
 }) {
-  const accent = present ? colors.primaryLight : colors.textDim;
+  const showModelFace = present || (!!loading && !!badgeModelId);
+  const accent = showModelFace ? colors.primaryLight : colors.textDim;
   const wifiSize = Math.max(11, Math.round(LOADED_DECK_ICON_SIZE * 0.2));
-  const scale = useRef(new Animated.Value(present ? 1 : 0.9)).current;
-  const opacity = useRef(new Animated.Value(present ? 1 : 0.78)).current;
-  const activeFade = useRef(new Animated.Value(present ? 0.48 : 0)).current;
-  const showActiveHalo = present && !ejecting;
+  const scale = useRef(new Animated.Value(present ? 1 : loading ? 0.94 : 0.9)).current;
+  const opacity = useRef(new Animated.Value(present ? 1 : loading ? 0.9 : 0.78)).current;
+  const activeFade = useRef(new Animated.Value(present ? 0.48 : loading ? 0.22 : 0)).current;
+  const loadBreath = useRef(new Animated.Value(0)).current;
+  const showActiveHalo = (present || loading) && !ejecting;
 
   useEffect(() => {
     if (!pulseToken) return;
@@ -310,6 +364,32 @@ function LoadedModelDeckIcon({
   }, [pulseToken, scale, activeFade]);
 
   useEffect(() => {
+    if (!loading) {
+      loadBreath.stopAnimation();
+      loadBreath.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(loadBreath, {
+          toValue: 1,
+          duration: 880,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+        Animated.timing(loadBreath, {
+          toValue: 0,
+          duration: 880,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [loading, loadBreath]);
+
+  useEffect(() => {
     if (ejecting) {
       Animated.parallel([
         Animated.timing(scale, {
@@ -335,18 +415,90 @@ function LoadedModelDeckIcon({
     }
 
     if (present) {
-      scale.setValue(1);
-      opacity.setValue(1);
-      activeFade.setValue(0.48);
+      Animated.parallel([
+        Animated.spring(scale, {
+          toValue: 1,
+          friction: 7,
+          tension: 84,
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: LOADED_DECK_PRESENT_MS,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(activeFade, {
+          toValue: 0.48,
+          duration: LOADED_DECK_PRESENT_MS + 80,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start();
       return;
     }
 
-    scale.setValue(0.9);
-    opacity.setValue(0.78);
-    activeFade.setValue(0);
-  }, [present, ejecting, scale, opacity, activeFade]);
+    if (loading) {
+      Animated.parallel([
+        Animated.timing(scale, {
+          toValue: 0.94,
+          duration: LOADED_DECK_PRESENT_MS,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacity, {
+          toValue: 0.9,
+          duration: LOADED_DECK_PRESENT_MS,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(activeFade, {
+          toValue: 0.22,
+          duration: LOADED_DECK_PRESENT_MS,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start();
+      return;
+    }
 
-  const glowColor = "#6d28d9";
+    Animated.parallel([
+      Animated.timing(scale, {
+        toValue: 0.9,
+        duration: LOADED_DECK_IDLE_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(opacity, {
+        toValue: 0.78,
+        duration: LOADED_DECK_IDLE_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(activeFade, {
+        toValue: 0,
+        duration: LOADED_DECK_IDLE_MS,
+        easing: Easing.in(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [present, loading, ejecting, scale, opacity, activeFade]);
+
+  const breathScale = loadBreath.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.035],
+  });
+  const combinedScale = loading
+    ? Animated.multiply(scale, breathScale)
+    : scale;
+  const haloOpacity = loading
+    ? Animated.add(
+        activeFade,
+        loadBreath.interpolate({ inputRange: [0, 1], outputRange: [0, 0.16] })
+      )
+    : activeFade;
+
+  const glowColor = getLoadedDeckGlowColor(isDark);
 
   return (
     <View style={styles.loadedDeckIconWrap}>
@@ -355,7 +507,7 @@ function LoadedModelDeckIcon({
           pointerEvents="none"
           style={[
             styles.loadedDeckRadialGlow,
-            { width: LOADED_DECK_GLOW_SIZE, height: LOADED_DECK_GLOW_SIZE, opacity: activeFade },
+            { width: LOADED_DECK_GLOW_SIZE, height: LOADED_DECK_GLOW_SIZE, opacity: haloOpacity },
           ]}
         >
           {LOADED_DECK_RADIAL_GLOW_LAYERS.map((layer, index) => {
@@ -384,7 +536,7 @@ function LoadedModelDeckIcon({
       <Animated.View
         style={[
           styles.loadedDeckIconInner,
-          { opacity, transform: [{ scale }] },
+          { opacity, transform: [{ scale: combinedScale }] },
         ]}
       >
         <ModelModeBadgeIcon
@@ -394,10 +546,10 @@ function LoadedModelDeckIcon({
           label={label}
           size={LOADED_DECK_ICON_SIZE}
           color={accent}
-          colorfulLogo={present}
-          monochrome={!present}
-          shellOnly={!present}
-          catalogSource={present ? catalogSource : null}
+          colorfulLogo={showModelFace}
+          monochrome={!showModelFace}
+          shellOnly={!showModelFace}
+          catalogSource={showModelFace ? catalogSource : null}
           catalogSourceScale={0.32}
         />
         {networkLinked ? (
@@ -413,6 +565,8 @@ function LoadedModelDeckIcon({
 function LoadedModelPlayingCard({
   platform,
   present,
+  loading,
+  loadProgress,
   sectionLabel,
   title,
   subtitle,
@@ -428,12 +582,16 @@ function LoadedModelPlayingCard({
   onLongPress,
   ejecting,
   presentPulseToken,
+  isDark,
   styles,
   colors,
 }: {
   platform: ModelPlatform;
   present: boolean;
+  loading?: boolean;
+  loadProgress?: number;
   presentPulseToken?: number;
+  isDark: boolean;
   sectionLabel: string;
   title: string;
   subtitle: string | null;
@@ -453,13 +611,15 @@ function LoadedModelPlayingCard({
 }) {
   const [pulseToken, setPulseToken] = useState(0);
   const showLoaded = present && !ejecting;
-  const isNetworkPlaceholder = !showLoaded;
+  const showLoading = !!loading && !showLoaded && !ejecting;
+  const animatedLoadProgress = useIndeterminateLoadProgress(showLoading);
+  const isNetworkPlaceholder = !showLoaded && !showLoading;
   const iconPresent = showLoaded;
-  const iconModelId = iconPresent ? badgeModelId : null;
-  const iconProvider = iconPresent ? provider : null;
-  const iconLabel = iconPresent ? title : null;
-  const iconCatalogSource = iconPresent ? catalogSource : null;
-  const displayTitle = showLoaded ? title : networkName ?? sectionLabel;
+  const iconModelId = showLoaded || showLoading ? badgeModelId : null;
+  const iconProvider = showLoaded || showLoading ? provider : null;
+  const iconLabel = showLoaded || showLoading ? title : null;
+  const iconCatalogSource = showLoaded || showLoading ? catalogSource : null;
+  const displayTitle = showLoaded || showLoading ? title : networkName ?? sectionLabel;
   const sizeLabel = showLoaded ? sizeLabelFromStatItems(statItems) : null;
   const providerLabel = showLoaded ? provider ?? subtitle : null;
   const traitStats = showLoaded ? loadedDeckTraitStatItems(statItems) : [];
@@ -476,33 +636,58 @@ function LoadedModelPlayingCard({
 
   useEffect(() => {
     if (ejecting) {
-      if (platform === "pc") {
-        bodyOpacity.setValue(1);
-        bodyTranslateY.setValue(0);
-      } else {
-        Animated.parallel([
-          Animated.timing(bodyOpacity, {
-            toValue: 0,
-            duration: MODEL_ROW_EJECT_FILL_MS * 0.85,
-            delay: 70,
-            easing: Easing.in(Easing.cubic),
-            useNativeDriver: true,
-          }),
-          Animated.timing(bodyTranslateY, {
-            toValue: 6,
-            duration: MODEL_ROW_EJECT_FILL_MS * 0.85,
-            delay: 70,
-            easing: Easing.in(Easing.cubic),
-            useNativeDriver: true,
-          }),
-        ]).start();
-      }
+      Animated.parallel([
+        Animated.timing(bodyOpacity, {
+          toValue: platform === "pc" ? 0.72 : 0,
+          duration: MODEL_ROW_EJECT_FILL_MS * 0.7,
+          delay: platform === "pc" ? 0 : 70,
+          easing: Easing.in(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(bodyTranslateY, {
+          toValue: platform === "pc" ? 2 : 6,
+          duration: MODEL_ROW_EJECT_FILL_MS * 0.7,
+          delay: platform === "pc" ? 0 : 70,
+          easing: Easing.in(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start();
       return;
     }
 
-    bodyOpacity.setValue(1);
-    bodyTranslateY.setValue(0);
-  }, [ejecting, platform, bodyOpacity, bodyTranslateY]);
+    if (showLoading) {
+      Animated.parallel([
+        Animated.timing(bodyOpacity, {
+          toValue: 0.88,
+          duration: LOADED_DECK_PRESENT_MS,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(bodyTranslateY, {
+          toValue: 0,
+          duration: LOADED_DECK_PRESENT_MS,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start();
+      return;
+    }
+
+    Animated.parallel([
+      Animated.timing(bodyOpacity, {
+        toValue: 1,
+        duration: LOADED_DECK_PRESENT_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(bodyTranslateY, {
+        toValue: 0,
+        duration: LOADED_DECK_PRESENT_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [ejecting, showLoading, platform, bodyOpacity, bodyTranslateY]);
 
   const bumpPulse = useCallback(() => {
     setPulseToken((token) => token + 1);
@@ -532,7 +717,7 @@ function LoadedModelPlayingCard({
         disabled={!slotInteractive}
         style={({ pressed }) => [
           styles.loadedDeckIconButton,
-          !showLoaded && styles.loadedDeckIconButtonEmpty,
+          !showLoaded && !showLoading && styles.loadedDeckIconButtonEmpty,
           pressed && slotInteractive && styles.loadedCardPressed,
         ]}
         accessibilityRole="button"
@@ -540,12 +725,25 @@ function LoadedModelPlayingCard({
         accessibilityLabel={
           showLoaded
             ? `Chat with ${title}`
-            : `No model loaded on ${sectionLabel.toLowerCase()}`
+            : showLoading
+              ? `Loading ${title}`
+              : `No model loaded on ${sectionLabel.toLowerCase()}`
         }
       >
+        <View style={styles.loadedDeckIconProgressClip} pointerEvents="none">
+          {ejecting ? <ModelEjectProgressFill active /> : null}
+          {showLoading ? (
+            <ModelLoadProgressFill
+              progress={loadProgress ?? animatedLoadProgress}
+              colors={colors}
+              fillColor={getLoadedDeckLoadFillColor(isDark)}
+            />
+          ) : null}
+        </View>
         <LoadedModelDeckIcon
           platform={platform}
           present={iconPresent}
+          loading={showLoading}
           ejecting={ejecting}
           pulseToken={pulseToken + (presentPulseToken ?? 0)}
           badgeModelId={iconModelId}
@@ -553,6 +751,7 @@ function LoadedModelPlayingCard({
           label={iconLabel}
           catalogSource={iconCatalogSource}
           networkLinked={networkLinked}
+          isDark={isDark}
           colors={colors}
           styles={styles}
         />
@@ -590,6 +789,11 @@ function LoadedModelPlayingCard({
           >
             {displayTitle}
           </Text>
+          {showLoading ? (
+            <Text style={styles.loadedDeckLoadingHint} numberOfLines={1}>
+              Loading…
+            </Text>
+          ) : null}
           {showNetworkHost ? (
             <Text style={styles.loadedDeckHostHint} numberOfLines={1}>
               {hostHint}
@@ -629,24 +833,30 @@ function LoadedModelDeck({
   active,
   remotePlatform,
   remoteModelId,
+  remoteLoadingModelId,
   refreshToken,
   interactionsLocked,
   onUseRemote,
   onUseLocal,
   onRemoteEjected,
   onLocalEjected,
+  onDeckModelLoaded,
+  isDark,
   styles,
   colors,
 }: {
   active: boolean;
   remotePlatform: ModelPlatform;
   remoteModelId?: string;
+  remoteLoadingModelId?: string | null;
   refreshToken?: number;
   interactionsLocked?: boolean;
   onUseRemote: (modelId: string) => void;
   onUseLocal: (key: string) => void;
   onRemoteEjected: (modelId: string) => void | Promise<void>;
   onLocalEjected: (key: string) => void | Promise<void>;
+  onDeckModelLoaded?: () => void;
+  isDark: boolean;
   styles: ReturnType<typeof createStyles>;
   colors: ThemeColors;
 }) {
@@ -658,8 +868,11 @@ function LoadedModelDeck({
   const [catalogs, setCatalogs] = useState<Record<string, LMModel[]>>({});
   const [catalogRefreshKey, setCatalogRefreshKey] = useState(0);
   const [deviceLoadedKey, setDeviceLoadedKey] = useState<string | null>(null);
+  const [phoneLoadingKey, setPhoneLoadingKey] = useState<string | null>(null);
   const [phonePresentPulse, setPhonePresentPulse] = useState(0);
+  const [pcPresentPulse, setPcPresentPulse] = useState(0);
   const [ejectingSlotId, setEjectingSlotId] = useState<string | null>(null);
+  const prevDeckPresentRef = useRef<Record<string, boolean>>({});
   const [ejectError, setEjectError] = useState<string | null>(null);
   const [deckWidth, setDeckWidth] = useState(0);
   const deckScrollRef = useRef<DeckScrollView>(null);
@@ -698,16 +911,27 @@ function LoadedModelDeck({
     if (!active) return;
     return subscribeOnDeviceModelLoaded((key) => {
       setDeviceLoadedKey(key);
+      setPhoneLoadingKey(null);
+      setPhonePresentPulse((token) => token + 1);
     });
   }, [active]);
 
   useEffect(() => {
-    if (!active || listUrls.length === 0) {
-      setCatalogs({});
+    if (!active) {
+      setPhoneLoadingKey(null);
       return;
     }
-    let cancelled = false;
-    void Promise.all(
+    const syncPhoneLoading = () => {
+      setPhoneLoadingKey(getLoadingOnDeviceModelKey());
+    };
+    syncPhoneLoading();
+    const id = setInterval(syncPhoneLoading, 220);
+    return () => clearInterval(id);
+  }, [active, deviceLoadedKey]);
+
+  const refreshCatalogs = useCallback(async () => {
+    if (!active || listUrls.length === 0) return;
+    const results = await Promise.all(
       listUrls.map(async (url) => {
         try {
           const models = await fetchModels(url, managementApiKey);
@@ -716,18 +940,33 @@ function LoadedModelDeck({
           return { url, models: [] as LMModel[] };
         }
       })
-    ).then((results) => {
-      if (cancelled) return;
-      setCatalogs((prev) => {
-        const next = { ...prev };
-        for (const { url, models } of results) next[url] = models;
-        return next;
-      });
+    );
+    setCatalogs((prev) => {
+      const next = { ...prev };
+      for (const { url, models } of results) next[url] = models;
+      return next;
     });
-    return () => {
-      cancelled = true;
-    };
-  }, [active, listUrls, managementApiKey, catalogRefreshKey]);
+  }, [active, listUrls, managementApiKey]);
+
+  useEffect(() => {
+    if (!active || listUrls.length === 0) {
+      setCatalogs({});
+      return;
+    }
+    void refreshCatalogs();
+  }, [active, listUrls, catalogRefreshKey, refreshCatalogs]);
+
+  useEffect(() => {
+    if (!active || listUrls.length === 0) return;
+    const fastPoll = !!remoteLoadingModelId || !!phoneLoadingKey;
+    const intervalMs = fastPoll
+      ? LOADED_DECK_CATALOG_POLL_FAST_MS
+      : LOADED_DECK_CATALOG_POLL_MS;
+    const id = setInterval(() => {
+      void refreshCatalogs();
+    }, intervalMs);
+    return () => clearInterval(id);
+  }, [active, listUrls, remoteLoadingModelId, phoneLoadingKey, refreshCatalogs]);
 
   const performPhoneEject = useCallback(
     async (model: LocalModelInfo) => {
@@ -779,24 +1018,32 @@ function LoadedModelDeck({
 
   const phoneLoadedModel =
     deviceLoadedKey != null ? getLocalModelByKey(deviceLoadedKey) ?? null : null;
+  const phoneLoadingModel =
+    phoneLoadingKey != null ? getLocalModelByKey(phoneLoadingKey) ?? null : null;
   const singleModelMode = settings.singleModelMode !== false;
   const activeRemoteModelId =
     remoteModelId?.trim() || settings.defaultModel?.trim() || null;
 
   const slotCards = slots.map((slot) => {
     if (slot.kind === "phone") {
+      const phonePresent = !!phoneLoadedModel;
+      const phoneLoading = !phonePresent && !!phoneLoadingModel;
+      const faceModel = phoneLoadedModel ?? phoneLoadingModel;
       const phoneStats = phoneLoadedModel
         ? getLocalModelDetailItems(phoneLoadedModel, true)
         : [];
-      const badgeModelId = phoneLoadedModel?.downloadUrl ?? null;
+      const badgeModelId = faceModel?.downloadUrl ?? null;
       return {
         slot,
-        present: !!phoneLoadedModel,
-        title: phoneLoadedModel?.name ?? slot.networkName ?? slot.sectionLabel,
-        subtitle: phoneLoadedModel?.provider ?? slot.hostHint,
+        present: phonePresent,
+        loading: phoneLoading,
+        loadProgress: phoneLoading ? 0.42 : undefined,
+        presentPulseToken: phonePresentPulse,
+        title: faceModel?.name ?? slot.networkName ?? slot.sectionLabel,
+        subtitle: faceModel?.provider ?? slot.hostHint,
         statItems: phoneStats,
         badgeModelId,
-        provider: phoneLoadedModel?.provider ?? null,
+        provider: faceModel?.provider ?? null,
         catalogSource: resolveDeckCatalogSource(slot.platform, badgeModelId),
         onIconPress: () => {
           if (phoneLoadedModel) onUseLocal(phoneLoadedModel.key);
@@ -812,12 +1059,18 @@ function LoadedModelDeck({
     }
 
     const catalog = slot.listUrl ? catalogs[slot.listUrl] ?? [] : [];
-    const remoteLoadedModel = resolveRemoteLoadedModel(
+    const pendingId =
+      slot.kind === "chat" ? remoteLoadingModelId?.trim() || null : null;
+    const deckState = resolveRemoteDeckState(
       catalog,
       slot.kind === "chat" ? activeRemoteModelId : null,
-      singleModelMode
+      singleModelMode,
+      pendingId
     );
-    const parsed = remoteLoadedModel ? parseModelName(remoteLoadedModel.id) : null;
+    const remoteLoadedModel = deckState.phase === "loaded" ? deckState.model : null;
+    const remoteLoading = deckState.phase === "loading";
+    const displayId = deckState.displayId;
+    const parsed = displayId ? parseModelName(displayId) : null;
     const publisher =
       remoteLoadedModel?.publisher ??
       remoteLoadedModel?.owned_by ??
@@ -826,12 +1079,15 @@ function LoadedModelDeck({
     const stats = remoteLoadedModel
       ? getRemoteInstalledStatItems(remoteLoadedModel, catalog)
       : [];
-    const badgeModelId = remoteLoadedModel?.id ?? null;
+    const badgeModelId = displayId;
 
     return {
       slot,
       present: !!remoteLoadedModel,
-      title: remoteLoadedModel
+      loading: remoteLoading,
+      loadProgress: remoteLoading ? 0.42 : undefined,
+      presentPulseToken: pcPresentPulse,
+      title: displayId
         ? (parsed?.displayName ?? platformRemoteLabel(slot.platform))
         : slot.networkName ?? slot.sectionLabel,
       subtitle: publisher ?? slot.hostHint,
@@ -851,6 +1107,28 @@ function LoadedModelDeck({
         : undefined,
     };
   });
+
+  const deckPresentKey = useMemo(
+    () => slotCards.map((entry) => `${entry.slot.id}:${entry.present ? 1 : 0}`).join("|"),
+    [slotCards]
+  );
+
+  useEffect(() => {
+    let loadedNow = false;
+    for (const entry of slotCards) {
+      const wasPresent = prevDeckPresentRef.current[entry.slot.id] ?? false;
+      if (entry.present && !wasPresent) {
+        if (entry.slot.kind === "phone") {
+          setPhonePresentPulse((token) => token + 1);
+        } else {
+          setPcPresentPulse((token) => token + 1);
+        }
+        loadedNow = true;
+      }
+      prevDeckPresentRef.current[entry.slot.id] = entry.present;
+    }
+    if (loadedNow) onDeckModelLoaded?.();
+  }, [deckPresentKey, onDeckModelLoaded, slotCards]);
 
   return (
     <View
@@ -899,9 +1177,9 @@ function LoadedModelDeck({
               <LoadedModelPlayingCard
                 platform={entry.slot.platform}
                 present={entry.present}
-                presentPulseToken={
-                  entry.slot.kind === "phone" ? phonePresentPulse : undefined
-                }
+                loading={entry.loading}
+                loadProgress={entry.loadProgress}
+                presentPulseToken={entry.presentPulseToken}
                 sectionLabel={entry.slot.sectionLabel}
                 title={entry.title}
                 subtitle={entry.subtitle}
@@ -916,6 +1194,7 @@ function LoadedModelDeck({
                 onBodyPress={entry.onBodyPress}
                 onLongPress={entry.onLongPress}
                 ejecting={ejectingSlotId === entry.slot.id}
+                isDark={isDark}
                 styles={styles}
                 colors={colors}
               />
@@ -1342,6 +1621,8 @@ export default function ChatModelPicker({
   const [capabilityFilter, setCapabilityFilter] = useState<ModelCapabilityFilter>("all");
   const [deckRefreshToken, setDeckRefreshToken] = useState(0);
   const [remoteLoadPending, setRemoteLoadPending] = useState(false);
+  const [remoteLoadingModelId, setRemoteLoadingModelId] = useState<string | null>(null);
+  const deckLoadCelebratedRef = useRef(false);
   const [sheetExiting, setSheetExiting] = useState(false);
   const localBlocked = IS_EXPO_GO || !!disableLocal;
   const sheetRef = useRef<SwipeDismissSheetHandle>(null);
@@ -1405,6 +1686,7 @@ export default function ChatModelPicker({
       pendingRemoteLoadIdRef.current = null;
       closePickerAfterRemoteLoadRef.current = false;
       setRemoteLoadPending(false);
+      setRemoteLoadingModelId(null);
       setPickerSelectError("Model load timed out. Try again.");
     }, 60_000);
     return () => clearTimeout(timer);
@@ -1421,14 +1703,21 @@ export default function ChatModelPicker({
       setLocalSelectError(null);
       setPickerSelectError(null);
       setRemoteLoadPending(false);
+      setRemoteLoadingModelId(null);
       pendingRemoteLoadIdRef.current = null;
+      deckLoadCelebratedRef.current = false;
     }
   }, [visible, chatMode]);
 
-  const refreshLoadedDeck = useCallback(async () => {
+  const refreshLoadedDeck = useCallback(() => {
+    setDeckRefreshToken((token) => token + 1);
+  }, []);
+
+  const celebrateDeckLoad = useCallback(async () => {
+    if (deckLoadCelebratedRef.current) return;
+    deckLoadCelebratedRef.current = true;
     void playModelLoadSound();
     await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setDeckRefreshToken((token) => token + 1);
   }, []);
 
   const openLibrary = (initialTab: ModelLibraryTab) => {
@@ -1450,6 +1739,8 @@ export default function ChatModelPicker({
       if (modelId === null) {
         pendingRemoteLoadIdRef.current = null;
         setRemoteLoadPending(false);
+        setRemoteLoadingModelId(null);
+        deckLoadCelebratedRef.current = false;
         await onRemoteSelect(null);
         animateClose();
         return;
@@ -1459,24 +1750,32 @@ export default function ChatModelPicker({
         if (options?.immediate) {
           pendingRemoteLoadIdRef.current = null;
           setRemoteLoadPending(false);
+          setRemoteLoadingModelId(null);
           void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
           animateClose();
           return;
         }
         pendingRemoteLoadIdRef.current = modelId;
+        deckLoadCelebratedRef.current = false;
+        setRemoteLoadingModelId(modelId);
         setRemoteLoadPending(true);
+        refreshLoadedDeck();
         return;
       }
 
       pendingRemoteLoadIdRef.current = modelId;
       closePickerAfterRemoteLoadRef.current = true;
+      deckLoadCelebratedRef.current = false;
+      setRemoteLoadingModelId(modelId);
       setRemoteLoadPending(true);
+      refreshLoadedDeck();
       try {
         await onRemoteSelect(modelId);
       } catch (error) {
         pendingRemoteLoadIdRef.current = null;
         closePickerAfterRemoteLoadRef.current = false;
         setRemoteLoadPending(false);
+        setRemoteLoadingModelId(null);
         setPickerSelectError(errorFromUnknown(error));
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         return;
@@ -1484,10 +1783,11 @@ export default function ChatModelPicker({
       if (options?.immediate) {
         pendingRemoteLoadIdRef.current = null;
         setRemoteLoadPending(false);
+        setRemoteLoadingModelId(null);
         animateClose();
       }
     },
-    [remoteModelId, onRemoteSelect, animateClose]
+    [remoteModelId, onRemoteSelect, animateClose, refreshLoadedDeck]
   );
 
   const handleRemoteLoadComplete = useCallback(async () => {
@@ -1496,10 +1796,16 @@ export default function ChatModelPicker({
     pendingRemoteLoadIdRef.current = null;
     closePickerAfterRemoteLoadRef.current = false;
     setRemoteLoadPending(false);
+    setRemoteLoadingModelId(null);
     if (!modelId) return;
-    await refreshLoadedDeck();
+    refreshLoadedDeck();
+    await celebrateDeckLoad();
     if (shouldClose) animateClose();
-  }, [refreshLoadedDeck, animateClose]);
+  }, [refreshLoadedDeck, celebrateDeckLoad, animateClose]);
+
+  const handleDeckModelLoaded = useCallback(() => {
+    void celebrateDeckLoad();
+  }, [celebrateDeckLoad]);
 
   const handleRequestClose = () => {
     if (pickerActionBusy) return;
@@ -1566,7 +1872,8 @@ export default function ChatModelPicker({
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
-    await refreshLoadedDeck();
+    refreshLoadedDeck();
+    await celebrateDeckLoad();
     if (options?.immediate) {
       animateClose();
     }
@@ -1676,12 +1983,15 @@ export default function ChatModelPicker({
             active={sheetContentLive && !showLibrary}
             remotePlatform={remotePlatform}
             remoteModelId={remoteModelId}
+            remoteLoadingModelId={remoteLoadingModelId}
             refreshToken={deckRefreshToken}
             interactionsLocked={pickerActionBusy}
             onUseRemote={(modelId) => void handleLoadedRemoteActivate(modelId)}
             onUseLocal={(key) => void handleLoadedLocalActivate(key)}
             onRemoteEjected={handleRemoteEjected}
             onLocalEjected={handleLocalEjected}
+            onDeckModelLoaded={handleDeckModelLoaded}
+            isDark={isDark}
             styles={styles}
             colors={palette}
           />
@@ -1864,12 +2174,12 @@ function createStyles(colors: ThemeColors) {
     loadedDeckColumn: {
       flex: 1,
       alignItems: "center",
-      paddingHorizontal: 4,
+      paddingHorizontal: 2,
       paddingVertical: 2,
       gap: 8,
       minWidth: 0,
       position: "relative",
-      overflow: "hidden",
+      overflow: "visible",
       borderRadius: radii.sm,
     },
     loadedDeckDivider: {
@@ -1891,6 +2201,16 @@ function createStyles(colors: ThemeColors) {
       alignItems: "center",
       justifyContent: "center",
       paddingVertical: 4,
+      paddingHorizontal: 8,
+      minWidth: LOADED_DECK_ICON_BUTTON_WIDTH,
+      position: "relative",
+      overflow: "visible",
+      borderRadius: radii.lg,
+    },
+    loadedDeckIconProgressClip: {
+      ...StyleSheet.absoluteFillObject,
+      overflow: "hidden",
+      borderRadius: radii.lg,
     },
     loadedDeckIconButtonEmpty: {
       opacity: 0.72,
@@ -1911,8 +2231,10 @@ function createStyles(colors: ThemeColors) {
     loadedDeckIconWrap: {
       alignItems: "center",
       justifyContent: "center",
-      paddingTop: 4,
-      paddingRight: 2,
+      paddingTop: 6,
+      paddingRight: 8,
+      paddingBottom: 8,
+      paddingLeft: 4,
     },
     loadedDeckIconInner: {
       position: "relative",
@@ -1943,6 +2265,14 @@ function createStyles(colors: ThemeColors) {
     },
     loadedDeckStatsRow: {
       marginTop: 4,
+      width: "100%",
+    },
+    loadedDeckLoadingHint: {
+      color: colors.textMuted,
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: "500",
+      textAlign: "center",
       width: "100%",
     },
     loadedDeckHostHint: {

@@ -6,9 +6,12 @@ import { ThemeColors } from "../lib/theme";
 export default function ModelLoadProgressFill({
   progress,
   colors,
+  fillColor,
 }: {
   progress: number;
   colors: ThemeColors;
+  /** Override default `colors.primaryGlow` (e.g. grey wash in light mode). */
+  fillColor?: string;
 }) {
   const widthAnim = useRef(new Animated.Value(0)).current;
 
@@ -36,7 +39,7 @@ export default function ModelLoadProgressFill({
           styles.fill,
           {
             width,
-            backgroundColor: colors.primaryGlow,
+            backgroundColor: fillColor ?? colors.primaryGlow,
           },
         ]}
       />

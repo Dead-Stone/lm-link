@@ -891,6 +891,11 @@ export function isModelInMemory(model: Pick<LMModel, "state">): boolean {
   return model.state?.trim().toLowerCase() === "loaded";
 }
 
+/** True when LM Studio is still loading this model into memory. */
+export function isModelLoading(model: Pick<LMModel, "state">): boolean {
+  return model.state?.trim().toLowerCase() === "loading";
+}
+
 export function isRemoteModelLoaded(model: Pick<LMModel, "state">): boolean {
   return isLoadedModelState(model.state);
 }

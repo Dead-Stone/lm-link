@@ -171,6 +171,16 @@ export function getAccentColors(isDark: boolean): AccentColors {
   };
 }
 
+/** Radial halo behind loaded-model deck icons. */
+export function getLoadedDeckGlowColor(isDark: boolean): string {
+  return isDark ? "#6d28d9" : "#a3a3a3";
+}
+
+/** Load-progress wash behind loaded-model deck icons. */
+export function getLoadedDeckLoadFillColor(isDark: boolean): string {
+  return isDark ? "rgba(124, 58, 237, 0.12)" : "rgba(0, 0, 0, 0.07)";
+}
+
 /** Settings keeps purple accent tokens in light mode. */
 export function getSettingsPalette(colors: ThemeColors, isDark: boolean): ThemeColors {
   if (isDark) return colors;

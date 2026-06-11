@@ -650,6 +650,10 @@ class LlamaContextManager {
     return this._loadedKey;
   }
 
+  get loadingKey(): string | null {
+    return this._loadingKey;
+  }
+
   subscribeModelLoaded(listener: OnDeviceModelLoadedListener): () => void {
     this._loadedListeners.add(listener);
     return () => this._loadedListeners.delete(listener);
@@ -789,6 +793,11 @@ export function getLoadedOnDeviceModelKey(): string | null {
 
 export function isOnDeviceModelLoaded(modelKey: string): boolean {
   return llamaManager.loadedKey === modelKey && llamaManager.context() != null;
+}
+
+export function getLoadingOnDeviceModelKey(): string | null {
+  if (llamaManager.loadedKey) return null;
+  return llamaManager.loadingKey;
 }
 
 export function subscribeOnDeviceModelLoaded(

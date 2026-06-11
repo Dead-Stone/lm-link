@@ -7,11 +7,13 @@ permalink: /install.html
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Install LM Link for Android — the free, open-source client for LM Studio. Chat over Wi‑Fi or run GGUF models on your phone." />
-  <meta name="theme-color" content="#5b4fcf" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="description" content="Install LM Link for Android — free, open-source client for LM Studio. Chat over Wi‑Fi or run GGUF models on your phone." />
+  <meta name="theme-color" content="#5b4fcf" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#f5f5f5" media="(prefers-color-scheme: light)" />
   <meta property="og:title" content="Install LM Link for Android" />
   <meta property="og:description" content="Chat with LM Studio from your phone — remote over Wi‑Fi or on-device GGUF models." />
-  <meta property="og:image" content="https://raw.githubusercontent.com/Dead-Stone/lm-link/master/assets/icon.png" />
+  <meta property="og:image" content="https://dead-stone.github.io/lm-link/play-feature-graphic.png" />
   <meta property="og:type" content="website" />
   <title>Install LM Link for Android</title>
   <link rel="icon" href="https://raw.githubusercontent.com/Dead-Stone/lm-link/master/assets/favicon.png" />
@@ -19,553 +21,610 @@ permalink: /install.html
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet" />
   <style>
+  /* Tokens aligned with lib/theme.ts — dark default, light via prefers-color-scheme */
+  :root {
+    --bg: #000000;
+    --bg-elevated: #0a0a0a;
+    --surface: rgba(255, 255, 255, 0.045);
+    --surface-solid: #111111;
+    --text: #f5f5f5;
+    --text-secondary: #c4c4cc;
+    --muted: #888888;
+    --dim: #555555;
+    --brand: #a78bfa;
+    --brand-mid: #c4b5fd;
+    --brand-deep: #5b4fcf;
+    --brand-glow: #c4b5fd;
+    --brand-dim: rgba(167, 139, 250, 0.12);
+    --brand-border: rgba(196, 181, 253, 0.22);
+    --accent-fill: linear-gradient(135deg, #c4b5fd 0%, #a78bfa 45%, #5b4fcf 100%);
+    --accent-shadow: rgba(91, 79, 207, 0.45);
+    --green: #34d399;
+    --green-dim: rgba(52, 211, 153, 0.14);
+    --border: rgba(255, 255, 255, 0.09);
+    --border-strong: rgba(255, 255, 255, 0.14);
+    --code-bg: rgba(255, 255, 255, 0.07);
+    --orb-1: rgba(167, 139, 250, 0.5);
+    --orb-2: rgba(91, 79, 207, 0.35);
+    --grid-dot: rgba(255, 255, 255, 0.07);
+    --banner-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+    --radius: 20px;
+    --radius-sm: 14px;
+    --max: 760px;
+    --font-display: "Plus Jakarta Sans", system-ui, sans-serif;
+    --font-body: "Inter", system-ui, sans-serif;
+  }
+
+  @media (prefers-color-scheme: light) {
     :root {
-      --bg: #07070a;
-      --bg-elevated: #111118;
-      --surface: rgba(255, 255, 255, 0.045);
-      --surface-hover: rgba(255, 255, 255, 0.07);
-      --text: #fafafa;
-      --text-secondary: #c4c4cc;
-      --muted: #8b8b96;
-      --brand: #5b4fcf;
-      --brand-mid: #7c6cf0;
-      --brand-glow: #a78bfa;
-      --brand-dim: rgba(91, 79, 207, 0.22);
-      --green: #34d399;
-      --green-dim: rgba(52, 211, 153, 0.14);
-      --border: rgba(255, 255, 255, 0.09);
-      --border-strong: rgba(255, 255, 255, 0.14);
-      --radius: 20px;
-      --radius-sm: 14px;
-      --max: 720px;
-      --font-display: "Plus Jakarta Sans", system-ui, sans-serif;
-      --font-body: "Inter", system-ui, sans-serif;
+      --bg: #f5f5f5;
+      --bg-elevated: #ffffff;
+      --surface: rgba(0, 0, 0, 0.04);
+      --surface-solid: #ffffff;
+      --text: #111111;
+      --text-secondary: #444444;
+      --muted: #666666;
+      --dim: #999999;
+      --brand: #6d28d9;
+      --brand-mid: #7c3aed;
+      --brand-deep: #5b4fcf;
+      --brand-glow: #7c3aed;
+      --brand-dim: rgba(124, 58, 237, 0.1);
+      --brand-border: rgba(124, 58, 237, 0.2);
+      --accent-fill: linear-gradient(135deg, #7c3aed 0%, #6d28d9 55%, #5b4fcf 100%);
+      --accent-shadow: rgba(109, 40, 217, 0.28);
+      --green: #16a34a;
+      --green-dim: rgba(22, 163, 74, 0.1);
+      --border: rgba(0, 0, 0, 0.08);
+      --border-strong: rgba(0, 0, 0, 0.12);
+      --code-bg: rgba(0, 0, 0, 0.06);
+      --orb-1: rgba(124, 58, 237, 0.18);
+      --orb-2: rgba(91, 79, 207, 0.12);
+      --grid-dot: rgba(0, 0, 0, 0.06);
+      --banner-shadow: 0 20px 60px rgba(0, 0, 0, 0.12);
     }
+  }
 
-    *, *::before, *::after { box-sizing: border-box; }
+  *, *::before, *::after { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
 
-    html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: var(--font-body);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
 
-    body {
-      margin: 0;
-      font-family: var(--font-body);
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.6;
-      -webkit-font-smoothing: antialiased;
-      overflow-x: hidden;
+  .bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    overflow: hidden;
+  }
+
+  .bg-orb {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.6;
+    animation: drift 18s ease-in-out infinite alternate;
+  }
+
+  .bg-orb-1 {
+    width: min(90vw, 520px);
+    height: min(90vw, 520px);
+    top: -10%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: radial-gradient(circle, var(--orb-1) 0%, transparent 70%);
+  }
+
+  .bg-orb-2 {
+    width: 300px;
+    height: 300px;
+    bottom: 8%;
+    right: -6%;
+    background: radial-gradient(circle, var(--orb-2) 0%, transparent 70%);
+    animation-delay: -6s;
+  }
+
+  .bg-grid {
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
+    background-size: 26px 26px;
+    mask-image: linear-gradient(to bottom, black 0%, transparent 88%);
+    opacity: 0.5;
+  }
+
+  @keyframes drift {
+    from { transform: translateX(-50%) translateY(0); }
+    to { transform: translateX(-48%) translateY(20px); }
+  }
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(14px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(124, 108, 240, 0.3), 0 16px 48px var(--accent-shadow); }
+    50% { box-shadow: 0 0 0 10px rgba(124, 108, 240, 0), 0 20px 56px var(--accent-shadow); }
+  }
+
+  .page {
+    position: relative;
+    z-index: 1;
+    max-width: var(--max);
+    margin: 0 auto;
+    padding: 0 20px 72px;
+  }
+
+  .feature-banner {
+    margin: 0 -20px 8px;
+    animation: rise 0.65s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .feature-banner img {
+    display: block;
+    width: 100%;
+    max-height: 220px;
+    object-fit: cover;
+    object-position: center;
+    border-radius: 0 0 var(--radius) var(--radius);
+    box-shadow: var(--banner-shadow);
+  }
+
+  @media (min-width: 640px) {
+    .feature-banner {
+      margin: 24px 0 0;
     }
-
-    .bg {
-      position: fixed;
-      inset: 0;
-      z-index: 0;
-      pointer-events: none;
-      overflow: hidden;
-    }
-
-    .bg-orb {
-      position: absolute;
-      border-radius: 50%;
-      filter: blur(80px);
-      opacity: 0.55;
-      animation: drift 18s ease-in-out infinite alternate;
-    }
-
-    .bg-orb-1 {
-      width: min(90vw, 520px);
-      height: min(90vw, 520px);
-      top: -12%;
-      left: 50%;
-      transform: translateX(-50%);
-      background: radial-gradient(circle, rgba(124, 108, 240, 0.55) 0%, transparent 70%);
-    }
-
-    .bg-orb-2 {
-      width: 320px;
-      height: 320px;
-      bottom: 10%;
-      right: -8%;
-      background: radial-gradient(circle, rgba(91, 79, 207, 0.35) 0%, transparent 70%);
-      animation-delay: -6s;
-    }
-
-    .bg-grid {
-      position: absolute;
-      inset: 0;
-      background-image: radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px);
-      background-size: 28px 28px;
-      mask-image: linear-gradient(to bottom, black 0%, transparent 85%);
-      opacity: 0.35;
-    }
-
-    @keyframes drift {
-      from { transform: translateX(-50%) translateY(0); }
-      to { transform: translateX(-48%) translateY(24px); }
-    }
-
-    @keyframes rise {
-      from { opacity: 0; transform: translateY(16px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    @keyframes pulse-glow {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(124, 108, 240, 0.35), 0 20px 60px rgba(91, 79, 207, 0.35); }
-      50% { box-shadow: 0 0 0 12px rgba(124, 108, 240, 0), 0 24px 70px rgba(91, 79, 207, 0.45); }
-    }
-
-    .page {
-      position: relative;
-      z-index: 1;
-      max-width: var(--max);
-      margin: 0 auto;
-      padding: 0 20px 64px;
-    }
-
-    .hero {
-      text-align: center;
-      padding: 48px 0 40px;
-      animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
-    }
-
-    .hero-mark {
-      width: 120px;
-      height: 120px;
-      margin: 0 auto 28px;
-      border-radius: 28px;
-      display: block;
-      animation: pulse-glow 4s ease-in-out infinite;
-    }
-
-    .eyebrow {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 0.72rem;
-      font-weight: 600;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--brand-glow);
-      margin-bottom: 14px;
-      padding: 6px 14px;
-      border-radius: 999px;
-      background: var(--brand-dim);
-      border: 1px solid rgba(167, 139, 250, 0.25);
-    }
-
-    .eyebrow-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: var(--green);
-      box-shadow: 0 0 10px var(--green);
-    }
-
-    h1 {
-      font-family: var(--font-display);
-      font-size: clamp(2.25rem, 7vw, 3rem);
-      font-weight: 800;
-      letter-spacing: -0.035em;
-      line-height: 1.08;
-      margin: 0 0 16px;
-    }
-
-    h1 .suffix {
-      display: block;
-      font-size: 0.52em;
-      font-weight: 600;
-      letter-spacing: 0.02em;
-      color: var(--text-secondary);
-      margin-top: 4px;
-    }
-
-    .lede {
-      margin: 0 auto;
-      max-width: 34ch;
-      font-size: 1.0625rem;
-      color: var(--text-secondary);
-      line-height: 1.65;
-    }
-
-    .pills {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: 8px;
-      margin-top: 24px;
-    }
-
-    .pill {
-      font-size: 0.8125rem;
-      font-weight: 500;
-      color: var(--muted);
-      padding: 7px 14px;
-      border-radius: 999px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-    }
-
-    .cta-block {
-      animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.1s both;
-      margin-bottom: 20px;
-    }
-
-    .cta-grid {
-      display: grid;
-      gap: 12px;
-    }
-
-    @media (min-width: 560px) {
-      .cta-grid { grid-template-columns: 1fr 1fr; }
-    }
-
-    .cta-card {
-      position: relative;
-      padding: 22px 20px 20px;
+    .feature-banner img {
       border-radius: var(--radius);
-      border: 1px solid var(--border);
-      background: linear-gradient(165deg, var(--surface) 0%, rgba(255, 255, 255, 0.02) 100%);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      overflow: hidden;
-      transition: border-color 0.2s ease, transform 0.2s ease;
+      max-height: 280px;
     }
+  }
 
-    .cta-card::before {
-      content: "";
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 3px;
-      border-radius: var(--radius) var(--radius) 0 0;
+  .hero {
+    text-align: center;
+    padding: 32px 0 28px;
+    animation: rise 0.65s cubic-bezier(0.22, 1, 0.36, 1) 0.05s both;
+  }
+
+  .hero-mark {
+    width: 96px;
+    height: 96px;
+    margin: 0 auto 20px;
+    border-radius: 24px;
+    display: block;
+    animation: pulse-glow 4s ease-in-out infinite;
+  }
+
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--brand-glow);
+    margin-bottom: 12px;
+    padding: 6px 14px;
+    border-radius: 999px;
+    background: var(--brand-dim);
+    border: 1px solid var(--brand-border);
+  }
+
+  .eyebrow-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+  }
+
+  h1 {
+    font-family: var(--font-display);
+    font-size: clamp(2rem, 6.5vw, 2.75rem);
+    font-weight: 800;
+    letter-spacing: -0.035em;
+    line-height: 1.08;
+    margin: 0 0 12px;
+  }
+
+  h1 .suffix {
+    display: block;
+    font-size: 0.5em;
+    font-weight: 600;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  .lede {
+    margin: 0 auto;
+    max-width: 36ch;
+    font-size: 1.05rem;
+    color: var(--text-secondary);
+    line-height: 1.65;
+  }
+
+  .lede a {
+    color: var(--brand-glow);
+    text-decoration: none;
+    font-weight: 500;
+  }
+
+  .lede a:hover { text-decoration: underline; }
+
+  .pills {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 20px;
+  }
+
+  .pill {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--muted);
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+  }
+
+  .download-card {
+    animation: rise 0.65s cubic-bezier(0.22, 1, 0.36, 1) 0.12s both;
+    margin-bottom: 16px;
+    padding: 24px 22px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border-strong);
+    background: var(--bg-elevated);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  }
+
+  @media (prefers-color-scheme: light) {
+    .download-card {
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
     }
+  }
 
-    .cta-card-preview::before {
-      background: linear-gradient(90deg, var(--brand), var(--brand-glow));
-    }
+  .download-card h2 {
+    font-family: var(--font-display);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 16px;
+  }
 
-    .cta-card-production::before {
-      background: linear-gradient(90deg, #22c55e, var(--green));
-    }
+  .release-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    margin-bottom: 18px;
+    padding: 12px 14px;
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+  }
 
-    .cta-card:hover {
-      border-color: var(--border-strong);
-      transform: translateY(-2px);
-    }
+  .release-status strong { color: var(--text); }
 
-    .cta-badge {
-      display: inline-block;
-      font-size: 0.65rem;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      padding: 4px 10px;
-      border-radius: 8px;
-      margin-bottom: 12px;
-    }
+  .release-tag {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--brand-glow);
+    background: var(--brand-dim);
+    padding: 3px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--brand-border);
+  }
 
-    .cta-badge-preview {
-      color: var(--brand-glow);
-      background: var(--brand-dim);
-    }
+  .release-tag.pending {
+    color: var(--muted);
+    background: var(--surface);
+    border-color: var(--border);
+  }
 
-    .cta-badge-production {
-      color: var(--green);
-      background: var(--green-dim);
-    }
+  .btn-row {
+    display: grid;
+    gap: 10px;
+  }
 
-    .cta-card h3 {
-      font-family: var(--font-display);
-      font-size: 1.125rem;
-      font-weight: 700;
-      margin: 0 0 8px;
-      letter-spacing: -0.02em;
-    }
+  @media (min-width: 520px) {
+    .btn-row { grid-template-columns: 1fr 1fr; }
+  }
 
-    .cta-card p {
-      margin: 0 0 18px;
-      font-size: 0.9rem;
-      color: var(--muted);
-      line-height: 1.55;
-    }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    text-decoration: none;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 0.9375rem;
+    padding: 15px 18px;
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+    cursor: pointer;
+  }
 
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      width: 100%;
-      text-decoration: none;
-      font-family: var(--font-display);
-      font-weight: 700;
-      font-size: 0.9375rem;
-      padding: 14px 18px;
-      border-radius: var(--radius-sm);
-      border: 1px solid transparent;
-      transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
-    }
+  .btn:hover:not(.btn-muted) { transform: translateY(-1px); }
+  .btn:active { transform: translateY(0); }
 
-    .btn:hover {
-      transform: translateY(-1px);
-    }
+  .btn-primary {
+    color: #fff;
+    background: var(--accent-fill);
+    box-shadow: 0 8px 28px var(--accent-shadow);
+  }
 
-    .btn:active { transform: translateY(0); }
+  .btn-primary:hover {
+    box-shadow: 0 12px 36px var(--accent-shadow);
+  }
 
-    .btn-primary {
-      color: #fff;
-      background: linear-gradient(135deg, var(--brand-mid) 0%, var(--brand) 100%);
-      box-shadow: 0 8px 28px rgba(91, 79, 207, 0.4);
-    }
+  .btn-secondary {
+    color: var(--text);
+    background: var(--surface-solid);
+    border-color: var(--border-strong);
+  }
 
-    .btn-primary:hover {
-      box-shadow: 0 12px 36px rgba(91, 79, 207, 0.5);
-    }
+  .btn-muted {
+    color: var(--dim);
+    background: var(--surface);
+    border-color: var(--border);
+    cursor: default;
+    pointer-events: none;
+    opacity: 0.85;
+  }
 
-    .btn-secondary {
-      color: var(--text);
-      background: var(--surface);
-      border-color: var(--border-strong);
-    }
+  .btn svg {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+  }
 
-    .btn-muted {
-      color: var(--muted);
-      background: rgba(255, 255, 255, 0.04);
-      border-color: var(--border);
-      cursor: default;
-      pointer-events: none;
-    }
+  .btn-sub {
+    display: block;
+    font-size: 0.72rem;
+    font-weight: 500;
+    opacity: 0.85;
+    margin-top: 2px;
+  }
 
-    .btn svg {
-      width: 18px;
-      height: 18px;
-      flex-shrink: 0;
-    }
+  .cta-note {
+    text-align: center;
+    font-size: 0.84rem;
+    color: var(--muted);
+    margin: 14px 2px 0;
+    line-height: 1.55;
+  }
 
-    .cta-note {
-      text-align: center;
-      font-size: 0.875rem;
-      color: var(--muted);
-      margin: 14px 4px 0;
-      line-height: 1.55;
-    }
+  .cta-note a {
+    color: var(--brand-glow);
+    text-decoration: none;
+    font-weight: 500;
+  }
 
-    .cta-note a {
-      color: var(--brand-glow);
-      text-decoration: none;
-      font-weight: 500;
-    }
+  .cta-note a:hover { text-decoration: underline; }
 
-    .cta-note a:hover { text-decoration: underline; }
+  .section {
+    animation: rise 0.65s cubic-bezier(0.22, 1, 0.36, 1) 0.18s both;
+    margin-bottom: 14px;
+    padding: 22px 20px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+  }
 
-    .section {
-      animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.18s both;
-      margin-bottom: 16px;
-      padding: 24px 22px;
-      border-radius: var(--radius);
-      border: 1px solid var(--border);
-      background: var(--bg-elevated);
-    }
+  .section h2 {
+    font-family: var(--font-display);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 16px;
+  }
 
-    .section h2 {
-      font-family: var(--font-display);
-      font-size: 0.72rem;
-      font-weight: 700;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--muted);
-      margin: 0 0 18px;
-    }
+  .steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
 
-    .steps {
-      list-style: none;
-      margin: 0;
-      padding: 0;
-      display: flex;
-      flex-direction: column;
-      gap: 0;
-    }
+  .step {
+    display: grid;
+    grid-template-columns: 36px 1fr;
+    gap: 14px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border);
+  }
 
-    .step {
-      display: grid;
-      grid-template-columns: 36px 1fr;
-      gap: 14px;
-      padding: 16px 0;
-      border-bottom: 1px solid var(--border);
-    }
+  .step:last-child { border-bottom: none; padding-bottom: 0; }
+  .step:first-child { padding-top: 0; }
 
-    .step:last-child { border-bottom: none; padding-bottom: 0; }
-    .step:first-child { padding-top: 0; }
+  .step-num {
+    width: 36px;
+    height: 36px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: 0.875rem;
+    color: var(--brand-glow);
+    background: var(--brand-dim);
+    border: 1px solid var(--brand-border);
+  }
 
-    .step-num {
-      width: 36px;
-      height: 36px;
-      border-radius: 12px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-family: var(--font-display);
-      font-weight: 800;
-      font-size: 0.875rem;
-      color: var(--brand-glow);
-      background: var(--brand-dim);
-      border: 1px solid rgba(167, 139, 250, 0.2);
-    }
+  .step-body {
+    font-size: 0.92rem;
+    color: var(--text-secondary);
+    padding-top: 5px;
+  }
 
-    .step-body {
-      font-size: 0.9375rem;
-      color: var(--text-secondary);
-      padding-top: 6px;
-    }
+  .step-body strong { color: var(--text); font-weight: 600; }
 
-    .step-body strong { color: var(--text); font-weight: 600; }
+  .step-body a {
+    color: var(--brand-glow);
+    text-decoration: none;
+    font-weight: 500;
+  }
 
-    .step-body a {
-      color: var(--brand-glow);
-      text-decoration: none;
-      font-weight: 500;
-    }
+  .step-body a:hover { text-decoration: underline; }
 
-    .step-body a:hover { text-decoration: underline; }
+  .feature-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 10px;
+  }
 
-    .feature-list {
-      list-style: none;
-      margin: 0;
-      padding: 0;
-      display: grid;
-      gap: 10px;
-    }
+  .feature-list li {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    font-size: 0.92rem;
+    color: var(--text-secondary);
+  }
 
-    .feature-list li {
-      display: flex;
-      align-items: flex-start;
-      gap: 12px;
-      font-size: 0.9375rem;
-      color: var(--text-secondary);
-    }
+  .feature-list li::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    margin-top: 9px;
+    border-radius: 50%;
+    background: var(--brand-mid);
+    flex-shrink: 0;
+    box-shadow: 0 0 10px var(--brand-dim);
+  }
 
-    .feature-list li::before {
-      content: "";
-      width: 8px;
-      height: 8px;
-      margin-top: 8px;
-      border-radius: 50%;
-      background: var(--brand-mid);
-      flex-shrink: 0;
-      box-shadow: 0 0 12px rgba(124, 108, 240, 0.5);
-    }
+  .feature-list a {
+    color: var(--brand-glow);
+    text-decoration: none;
+  }
 
-    .feature-list a {
-      color: var(--brand-glow);
-      text-decoration: none;
-    }
+  .meta-line {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
 
-    .feature-list a:hover { text-decoration: underline; }
+  code {
+    font-family: ui-monospace, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.85em;
+    background: var(--code-bg);
+    padding: 2px 7px;
+    border-radius: 6px;
+    color: var(--text-secondary);
+  }
 
-    .meta-line {
-      margin-top: 16px;
-      padding-top: 16px;
-      border-top: 1px solid var(--border);
-      font-size: 0.8125rem;
-      color: var(--muted);
-    }
+  details.advanced {
+    margin-bottom: 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    overflow: hidden;
+  }
 
-    code {
-      font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
-      font-size: 0.85em;
-      background: rgba(255, 255, 255, 0.07);
-      padding: 2px 7px;
-      border-radius: 6px;
-      color: var(--text-secondary);
-    }
+  details.advanced summary {
+    cursor: pointer;
+    padding: 15px 18px;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 0.88rem;
+    color: var(--muted);
+    list-style: none;
+    user-select: none;
+  }
 
-    details.advanced {
-      margin-bottom: 16px;
-      border-radius: var(--radius-sm);
-      border: 1px solid var(--border);
-      background: rgba(255, 255, 255, 0.02);
-      overflow: hidden;
-    }
+  details.advanced summary::-webkit-details-marker { display: none; }
 
-    details.advanced summary {
-      cursor: pointer;
-      padding: 16px 20px;
-      font-family: var(--font-display);
-      font-weight: 600;
-      font-size: 0.9rem;
-      color: var(--muted);
-      list-style: none;
-      user-select: none;
-    }
+  details.advanced summary::after {
+    content: "+";
+    float: right;
+    color: var(--brand-glow);
+  }
 
-    details.advanced summary::-webkit-details-marker { display: none; }
+  details.advanced[open] summary::after { content: "−"; }
 
-    details.advanced summary::after {
-      content: "+";
-      float: right;
-      font-weight: 400;
-      color: var(--brand-glow);
-    }
+  details.advanced .inner {
+    padding: 0 18px 16px;
+    font-size: 0.84rem;
+    color: var(--muted);
+    line-height: 1.6;
+  }
 
-    details.advanced[open] summary::after { content: "−"; }
+  details.advanced ol {
+    margin: 8px 0 0;
+    padding-left: 1.2rem;
+  }
 
-    details.advanced .inner {
-      padding: 0 20px 18px;
-      font-size: 0.875rem;
-      color: var(--muted);
-    }
+  details.advanced li { margin-bottom: 6px; }
+  details.advanced a { color: var(--brand-glow); }
 
-    details.advanced ol {
-      margin: 0;
-      padding-left: 1.2rem;
-    }
+  footer {
+    text-align: center;
+    padding-top: 28px;
+    animation: rise 0.65s cubic-bezier(0.22, 1, 0.36, 1) 0.22s both;
+  }
 
-    details.advanced li { margin-bottom: 8px; }
-    details.advanced a { color: var(--brand-glow); }
+  .footer-links {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px 18px;
+    margin-bottom: 16px;
+  }
 
-    footer {
-      text-align: center;
-      padding-top: 32px;
-      animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.25s both;
-    }
+  .footer-links a {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.875rem;
+    font-weight: 500;
+  }
 
-    .footer-links {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: 8px 20px;
-      margin-bottom: 20px;
-    }
+  .footer-links a:hover { color: var(--brand-glow); }
 
-    .footer-links a {
-      color: var(--text-secondary);
-      text-decoration: none;
-      font-size: 0.875rem;
-      font-weight: 500;
-      transition: color 0.15s ease;
-    }
+  .disclaimer {
+    font-size: 0.74rem;
+    color: var(--muted);
+    line-height: 1.65;
+    max-width: 46ch;
+    margin: 0 auto;
+    opacity: 0.9;
+  }
 
-    .footer-links a:hover { color: var(--brand-glow); }
-
-    .disclaimer {
-      font-size: 0.75rem;
-      color: var(--muted);
-      line-height: 1.65;
-      max-width: 48ch;
-      margin: 0 auto;
-      opacity: 0.85;
-    }
-
-    .open-source {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      margin-top: 20px;
-      font-size: 0.8125rem;
-      color: var(--muted);
-    }
-
-    .open-source svg { opacity: 0.7; }
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
   </style>
 </head>
 <body>
@@ -576,13 +635,23 @@ permalink: /install.html
   </div>
 
   <div class="page">
+    <div class="feature-banner">
+      <img
+        src="./play-feature-graphic.png"
+        width="1024"
+        height="500"
+        alt="LM Link — chat with local AI on your phone"
+        loading="eager"
+      />
+    </div>
+
     <header class="hero">
       <img
         class="hero-mark"
-        src="https://raw.githubusercontent.com/Dead-Stone/lm-link/master/assets/hero-animation.gif"
-        width="120"
-        height="120"
-        alt="LM Link — animated brand mark"
+        src="https://raw.githubusercontent.com/Dead-Stone/lm-link/master/assets/icon.png"
+        width="96"
+        height="96"
+        alt="LM Link app icon"
       />
       <p class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span> Free · Open source · MIT</p>
       <h1>
@@ -590,8 +659,8 @@ permalink: /install.html
         <span class="suffix">for Android</span>
       </h1>
       <p class="lede">
-        The mobile client for <a href="https://lmstudio.ai" style="color: var(--brand-glow); text-decoration: none; font-weight: 500;">LM Studio</a>.
-        Chat with models on your Mac or PC over Wi‑Fi — or run GGUF models on your phone.
+        The mobile client for <a href="https://lmstudio.ai">LM Studio</a>.
+        Chat on your Mac or PC over Wi‑Fi — or run GGUF models on your phone.
       </p>
       <div class="pills" role="list">
         <span class="pill" role="listitem">Remote streaming</span>
@@ -601,55 +670,52 @@ permalink: /install.html
       </div>
     </header>
 
-    <section class="cta-block" aria-labelledby="install-heading">
-      <h2 id="install-heading" class="visually-hidden">Install</h2>
-      <div class="cta-grid">
-        <article class="cta-card cta-card-preview">
-          <span class="cta-badge cta-badge-preview">Pre-production</span>
-          <h3>GitHub Releases</h3>
-          <p>Official preview APKs for testers and early adopters — updated before each Play Store release.</p>
-          <a class="btn btn-primary" href="https://github.com/Dead-Stone/lm-link/releases/latest" rel="noopener noreferrer">
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
-            Download preview APK
-          </a>
-        </article>
+    <section class="download-card" aria-labelledby="install-heading">
+      <h2 id="install-heading">Get the app</h2>
 
-        <article class="cta-card cta-card-production">
-          <span class="cta-badge cta-badge-production">Production</span>
-          <h3>Google Play</h3>
-          <p>Stable release for everyone — same package, automatic updates when live.</p>
-          <a
-            class="btn btn-secondary"
-            id="play-store-link"
-            href="https://play.google.com/store/apps/details?id=com.lmlink.android"
-            rel="noopener noreferrer"
-          >
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3.609 1.814 13.792 12 3.61 22.186a1.004 1.004 0 0 1-.61-.92V2.734a1.004 1.004 0 0 1 .609-.92zm3.196 4.96 9.653 5.6-2.316 2.316-7.337-7.337v-.579zm0 11.452 7.337-7.337 2.316 2.316-9.653 5.6v-.579zM5.864 2.658 14.76 8.79l-2.47 2.47L5.864 2.658zm0 18.684 6.426-8.602 2.47 2.47-8.896 6.132z"/></svg>
-            Get it on Google Play
-          </a>
-        </article>
+      <div class="release-status" id="release-status" role="status">
+        <span class="release-tag pending" id="release-tag">Checking…</span>
+        <span id="release-detail">Looking for the latest preview on GitHub</span>
       </div>
-      <p class="cta-note" id="play-store-note">
-        Play Store rolling out?
-        <a href="https://github.com/Dead-Stone/lm-link/releases/latest">Grab the preview APK</a>
-        or
-        <a href="mailto:mohanmoganti2023@gmail.com?subject=LM%20Link%20Android%20beta%20tester">join the closed test</a>.
+
+      <div class="btn-row">
+        <a class="btn btn-primary" id="apk-download" href="https://github.com/Dead-Stone/lm-link/releases/latest" rel="noopener noreferrer">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+          <span>
+            Download APK
+            <span class="btn-sub" id="apk-sub">Preview build</span>
+          </span>
+        </a>
+
+        <a class="btn btn-muted" id="play-store-link" aria-disabled="true">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3.609 1.814 13.792 12 3.61 22.186a1.004 1.004 0 0 1-.61-.92V2.734a1.004 1.004 0 0 1 .609-.92zm3.196 4.96 9.653 5.6-2.316 2.316-7.337-7.337v-.579zm0 11.452 7.337-7.337 2.316 2.316-9.653 5.6v-.579zM5.864 2.658 14.76 8.79l-2.47 2.47L5.864 2.658zm0 18.684 6.426-8.602 2.47 2.47-8.896 6.132z"/></svg>
+          <span>
+            Google Play
+            <span class="btn-sub">Coming soon</span>
+          </span>
+        </a>
+      </div>
+
+      <p class="cta-note" id="cta-note">
+        Preview APKs are published on
+        <a href="https://github.com/Dead-Stone/lm-link/releases">GitHub Releases</a>.
+        Same package as Play: <code>com.lmlink.android</code>.
       </p>
     </section>
 
     <section class="section" aria-labelledby="apk-heading">
-      <h2 id="apk-heading">Install preview APK</h2>
+      <h2 id="apk-heading">Install on Android</h2>
       <ol class="steps">
         <li class="step">
           <span class="step-num">1</span>
           <div class="step-body">
-            Open <a href="https://github.com/Dead-Stone/lm-link/releases/latest">GitHub Releases</a> and download
-            <code>lm-link-preview-*.apk</code>.
+            Tap <strong>Download APK</strong> above (or open
+            <a href="https://github.com/Dead-Stone/lm-link/releases/latest">GitHub Releases</a>).
           </div>
         </li>
         <li class="step">
           <span class="step-num">2</span>
-          <div class="step-body">On your phone, open the file and tap <strong>Install</strong>.</div>
+          <div class="step-body">Open the downloaded file and tap <strong>Install</strong>.</div>
         </li>
         <li class="step">
           <span class="step-num">3</span>
@@ -657,10 +723,10 @@ permalink: /install.html
         </li>
         <li class="step">
           <span class="step-num">4</span>
-          <div class="step-body">Launch <strong>LM Link</strong> — the in-app tutorial guides setup.</div>
+          <div class="step-body">Launch <strong>LM Link</strong> — the tutorial walks through setup.</div>
         </li>
       </ol>
-      <p class="meta-line">Package <code>com.lmlink.android</code> · Previews ship on GitHub first</p>
+      <p class="meta-line">Updates: install a newer APK over the existing app (same signing key).</p>
     </section>
 
     <section class="section" aria-labelledby="needs-heading">
@@ -698,21 +764,17 @@ permalink: /install.html
     </section>
 
     <details class="advanced">
-      <summary>For maintainers &amp; developers</summary>
+      <summary>For maintainers — publish a preview APK</summary>
       <div class="inner">
-        <p><strong>Publish a preview:</strong></p>
+        <p><strong>One command</strong> (requires <a href="https://cli.github.com/">GitHub CLI</a> + Android SDK):</p>
         <ol>
-          <li><code>npm run build:apk:local</code> → APK in <code>builds/</code></li>
-          <li>
-            <a href="https://github.com/Dead-Stone/lm-link/releases/new">Create a GitHub Release</a>
-            (e.g. <code>v1.0.0-preview.1</code>) and attach the APK
-          </li>
-          <li>Share this install page with testers</li>
+          <li><code>npm run publish:preview</code> — builds APK and creates/updates a GitHub Release</li>
+          <li>Or manually: <code>npm run build:apk:local</code> → upload <code>builds/lm-link-preview-*.apk</code></li>
+          <li>This page auto-links the latest <code>.apk</code> asset via the GitHub API</li>
         </ol>
-        <p style="margin-top: 14px;">
-          <strong>Build from source:</strong>
-          <a href="https://github.com/Dead-Stone/lm-link">github.com/Dead-Stone/lm-link</a>
-          — <code>npm install</code>, <code>npm run android</code>
+        <p style="margin-top: 12px;">
+          <a href="https://github.com/Dead-Stone/lm-link">Source</a> ·
+          <code>npm install</code> · <code>npm run android</code>
         </p>
       </div>
     </details>
@@ -727,41 +789,72 @@ permalink: /install.html
       <p class="disclaimer">
         LM Link is an independent open-source project. Not affiliated with, endorsed by, or sponsored by LM Studio or Element Labs Inc.
       </p>
-      <p class="open-source">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
-        Open source under MIT
-      </p>
     </footer>
   </div>
 
-  <style>
-    .visually-hidden {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      padding: 0;
-      margin: -1px;
-      overflow: hidden;
-      clip: rect(0, 0, 0, 0);
-      white-space: nowrap;
-      border: 0;
-    }
-  </style>
-
   <script>
     (function () {
+      var REPO = "Dead-Stone/lm-link";
+      var RELEASES_LATEST = "https://github.com/" + REPO + "/releases/latest";
+      var apkBtn = document.getElementById("apk-download");
+      var apkSub = document.getElementById("apk-sub");
+      var releaseTag = document.getElementById("release-tag");
+      var releaseDetail = document.getElementById("release-detail");
       var play = document.getElementById("play-store-link");
-      var note = document.getElementById("play-store-note");
-      if (!play || !note) return;
 
-      if (new URLSearchParams(window.location.search).get("play") === "soon") {
-        play.className = "btn btn-muted";
-        play.removeAttribute("href");
-        play.innerHTML = "Google Play — coming soon";
-        play.setAttribute("aria-disabled", "true");
-        note.innerHTML =
-          'Until Play is live, install the <a href="https://github.com/Dead-Stone/lm-link/releases/latest">preview APK on GitHub</a> or ' +
-          '<a href="mailto:mohanmoganti2023@gmail.com?subject=LM%20Link%20Android%20beta%20tester">request closed testing</a>.';
+      function formatBytes(n) {
+        if (!n || n < 1) return "";
+        var u = ["B", "KB", "MB", "GB"];
+        var i = 0;
+        while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+        return n.toFixed(i === 0 ? 0 : 1) + " " + u[i];
+      }
+
+      function setNoRelease() {
+        releaseTag.textContent = "No release yet";
+        releaseTag.className = "release-tag pending";
+        releaseDetail.textContent = "Maintainer: run npm run publish:preview";
+        apkSub.textContent = "See GitHub Releases";
+        apkBtn.href = RELEASES_LATEST;
+      }
+
+      function setRelease(data, apk) {
+        releaseTag.textContent = data.tag_name;
+        releaseTag.className = "release-tag";
+        var when = data.published_at ? new Date(data.published_at).toLocaleDateString() : "";
+        releaseDetail.innerHTML =
+          "<strong>" + apk.name + "</strong>" +
+          (apk.size ? " · " + formatBytes(apk.size) : "") +
+          (when ? " · " + when : "");
+        apkBtn.href = apk.browser_download_url;
+        apkSub.textContent = data.tag_name;
+      }
+
+      fetch("https://api.github.com/repos/" + REPO + "/releases/latest")
+        .then(function (res) {
+          if (!res.ok) throw new Error("no release");
+          return res.json();
+        })
+        .then(function (data) {
+          var assets = data.assets || [];
+          var apk = assets.find(function (a) {
+            return /\.apk$/i.test(a.name);
+          });
+          if (!apk) {
+            setNoRelease();
+            return;
+          }
+          setRelease(data, apk);
+        })
+        .catch(function () {
+          setNoRelease();
+        });
+
+      if (play && new URLSearchParams(window.location.search).get("play") === "live") {
+        play.className = "btn btn-secondary";
+        play.removeAttribute("aria-disabled");
+        play.href = "https://play.google.com/store/apps/details?id=com.lmlink.android";
+        play.querySelector(".btn-sub").textContent = "Stable release";
       }
     })();
   </script>

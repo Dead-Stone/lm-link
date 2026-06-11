@@ -86,7 +86,8 @@
     "build:apk:local": "bash scripts/build-android-local.sh preview",
     "build:apk:local:debug": "bash scripts/build-android-local.sh development",
     "build:aab": "EAS_BUILD_NO_EXPO_GO_WARNING=true eas build --platform android --profile production",
-    "build:aab:local": "EAS_BUILD_NO_EXPO_GO_WARNING=true bash scripts/build-android-local.sh production"
+    "build:aab:local": "EAS_BUILD_NO_EXPO_GO_WARNING=true bash scripts/build-android-local.sh production",
+    "publish:preview": "bash scripts/publish-preview-apk.sh"
   },
   "private": true
 }

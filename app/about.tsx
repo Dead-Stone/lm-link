@@ -52,12 +52,11 @@ function useAboutColors() {
   return useMemo(() => getSettingsPalette(colors, isDark), [colors, isDark]);
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function AboutGroup({ children }: { children: React.ReactNode }) {
   const colors = useAboutColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{title}</Text>
       <View style={styles.group}>{children}</View>
     </View>
   );
@@ -189,9 +188,7 @@ export default function AboutScreen() {
         contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 24 }]}
         showsVerticalScrollIndicator={false}
       >
-        <AboutPhoneSection colors={colors} />
-
-        <Section title="About">
+        <AboutGroup>
           <View style={styles.introBlock}>
             <Text style={styles.appName}>{APP_DISPLAY_NAME}</Text>
             <Text style={styles.appTagline}>{APP_ABOUT_TAGLINE}</Text>
@@ -200,6 +197,10 @@ export default function AboutScreen() {
             <Text style={styles.disclaimer}>{APP_ABOUT_LEGAL_FOOTER}</Text>
             <Text style={styles.disclaimer}>{FOOTER_LEGAL_SUFFIX}</Text>
           </View>
+
+          <Divider />
+
+          <AboutPhoneSection colors={colors} />
 
           <Divider />
 
@@ -355,7 +356,7 @@ export default function AboutScreen() {
               </Animated.View>
             </>
           ) : null}
-        </Section>
+        </AboutGroup>
       </ScrollView>
     </View>
   );
@@ -377,15 +378,6 @@ function createStyles(colors: ThemeColors) {
     topBarTitle: createScreenHeaderTitleStyle(colors),
     scroll: { paddingHorizontal: 16, paddingTop: 16 },
     section: { marginBottom: 24 },
-    sectionTitle: {
-      color: colors.textDim,
-      ...SETTINGS_SUBTEXT,
-      fontWeight: "600",
-      letterSpacing: 0.6,
-      textTransform: "uppercase",
-      marginBottom: 6,
-      paddingHorizontal: 4,
-    },
     group: {
       backgroundColor: colors.bgElevated,
       borderRadius: radii.lg,

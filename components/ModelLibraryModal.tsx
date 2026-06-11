@@ -71,7 +71,7 @@ import {
 import { localModelDownloadStore } from "../lib/local-model-download-store";
 import { countDownloadedLocalModels } from "../lib/local-storage-usage";
 import { createModalTheme } from "../lib/modal-theme";
-import DismissAffordance from "./DismissAffordance";
+import SheetSwipeHint, { SHEET_SWIPE_HINT_BAND } from "./SheetSwipeHint";
 import SwipeDismissSheet from "./SwipeDismissSheet";
 import { ThemeColors, useAccentPalette } from "../lib/theme";
 import { createModalStyles, createLibraryStyles } from "./ModelLibraryModal.styles";
@@ -1648,6 +1648,8 @@ function LibraryBlockBanner({
   );
 }
 
+const MODEL_LIBRARY_HEADER_BAND = 56;
+
 export default function ModelLibraryModal({
   visible,
   onClose,
@@ -1656,6 +1658,8 @@ export default function ModelLibraryModal({
   const colors = useAccentPalette();
   const styles = useMemo(() => createModalStyles(colors), [colors]);
   const modalStyles = useMemo(() => createModalTheme(colors), [colors]);
+  const libraryDismissZone =
+    modalPageTopPadding(insets.top) + SHEET_SWIPE_HINT_BAND + MODEL_LIBRARY_HEADER_BAND;
 
   return (
     <Modal
@@ -1669,13 +1673,28 @@ export default function ModelLibraryModal({
       <SwipeDismissSheet
         direction="down"
         overlayPeel
+        bottomSheet
+        presented={visible}
+        downStartZoneHeight={libraryDismissZone}
         backdropColor={colors.overlayLight}
         onDismiss={onClose}
         style={styles.sheetRoot}
       >
       <View style={[modalStyles.pageContainer, { paddingTop: modalPageTopPadding(insets.top) }]}>
+        <SheetSwipeHint colors={colors} onPress={onClose} />
+
         <View style={modalStyles.pageHeader}>
-          <DismissAffordance kind="down" colors={colors} />
+          <Pressable
+            onPress={onClose}
+            hitSlop={8}
+            style={modalStyles.pageHeaderBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+          >
+            <View style={modalStyles.closeCircle}>
+              <Ionicons name="close" size={18} color={colors.textMuted} />
+            </View>
+          </Pressable>
           <Text style={modalStyles.pageTitle}>Model Library</Text>
           <View style={modalStyles.pageHeaderBtn} />
         </View>

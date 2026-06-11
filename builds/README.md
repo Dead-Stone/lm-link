@@ -12,6 +12,15 @@ Files are named:
 
 `lm-link-{profile}-v{version}-{YYYYMMDD-HHMMSS}.{apk|aab}`
 
-This folder is gitignored — upload artifacts to Play Console or distribute manually.
+This folder is gitignored.
+
+## Distribution
+
+| Channel | Artifact | Where |
+|--------|----------|--------|
+| **Pre-production** (testers) | Preview APK | [GitHub Releases](https://github.com/Dead-Stone/lm-link/releases) — tag e.g. `v1.0.0-preview.1`, attach `lm-link-preview-*.apk` |
+| **Production** | AAB | Google Play Console — upload `lm-link-production-*.aab` from here or EAS |
+
+**Pre-production flow:** build locally → create a GitHub Release → upload the preview APK → share [install.html](https://dead-stone.github.io/lm-link/install.html).
 
 Cloud builds (`npm run build:aab`) download from the EAS dashboard; copy them here if you want a local archive.

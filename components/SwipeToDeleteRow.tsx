@@ -165,9 +165,13 @@ export default function SwipeToDeleteRow({
     transform: [{ translateX: translateX.value }],
   }));
 
+  const actionsLayerStyle = useAnimatedStyle(() => ({
+    opacity: Math.abs(translateX.value) > 0.5 ? 1 : 0,
+  }));
+
   return (
     <View style={styles.root}>
-      <View style={styles.actionsLayer} pointerEvents="box-none">
+      <Animated.View style={[styles.actionsLayer, actionsLayerStyle]} pointerEvents="box-none">
         {onLoad ? (
           <View style={styles.loadAction}>
             <Pressable
@@ -242,7 +246,7 @@ export default function SwipeToDeleteRow({
             ) : null}
           </View>
         ) : null}
-      </View>
+      </Animated.View>
 
       <GestureDetector gesture={pan}>
         <Animated.View style={[{ backgroundColor }, rowStyle]}>{children}</Animated.View>

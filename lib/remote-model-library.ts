@@ -149,6 +149,61 @@ export const REMOTE_MODEL_LIBRARY: RemoteLibraryEntry[] = [
     badgeColor: "#22c55e",
     description: "OpenAI's open MoE model with tool use and reasoning (needs ~12 GB RAM).",
   },
+  {
+    id: "google/gemma-3n-e4b",
+    name: "Gemma 3n E4B",
+    publisher: "Google",
+    params: "4B",
+    sizeLabel: "~3 GB",
+    badge: "Vision",
+    badgeColor: "#4285f4",
+    description: "Compact multimodal Gemma — image and video understanding on Mac.",
+    downloadSource: "huggingface",
+  },
+  {
+    id: "google/gemma-3n-e2b",
+    name: "Gemma 3n E2B",
+    publisher: "Google",
+    params: "2B",
+    sizeLabel: "~1.8 GB",
+    badge: "Vision",
+    badgeColor: "#4285f4",
+    description: "Lightweight multimodal Gemma for vision chat.",
+    downloadSource: "huggingface",
+  },
+  {
+    id: "qwen/qwen2.5-vl-3b-instruct",
+    name: "Qwen2.5-VL 3B",
+    publisher: "Qwen",
+    params: "3B",
+    sizeLabel: "~2 GB",
+    badge: "Vision",
+    badgeColor: "#06b6d4",
+    description: "Small vision-language model for image and video chat.",
+    downloadSource: "huggingface",
+  },
+  {
+    id: "qwen/qwen2.5-vl-7b-instruct",
+    name: "Qwen2.5-VL 7B",
+    publisher: "Qwen",
+    params: "7B",
+    sizeLabel: "~4.7 GB",
+    badge: "Vision",
+    badgeColor: "#06b6d4",
+    description: "Stronger Qwen vision model for detailed image understanding.",
+    downloadSource: "huggingface",
+  },
+  {
+    id: "qwen/qwen3-vl-4b",
+    name: "Qwen3-VL 4B",
+    publisher: "Qwen",
+    params: "4B",
+    sizeLabel: "~2.5 GB",
+    badge: "Vision",
+    badgeColor: "#06b6d4",
+    description: "Latest Qwen3 vision model — image and video inputs.",
+    downloadSource: "huggingface",
+  },
 ];
 
 /** Curated Mac/PC picks for Quick download when capability filter is All. */
@@ -196,14 +251,14 @@ export const QUICK_ACCESS_REMOTE_BY_CAPABILITY: Record<
     "llava-hf/llava-1.5-7b-hf",
   ],
   video: [
-    "nvidia/nemotron-3-nano-omni",
-    "nvidia/nemotron-3-nano-12b-v2-vl",
-    "qwen/qwen3-omni-30b-a3b",
     "google/gemma-3n-e4b",
+    "qwen/qwen2.5-vl-3b-instruct",
     "qwen/qwen2.5-vl-7b-instruct",
-    "microsoft/phi-4-multimodal-instruct",
-    "mistralai/pixtral-12b",
     "qwen/qwen3-vl-4b",
+    "google/gemma-3n-e2b",
+    "microsoft/phi-4-multimodal-instruct",
+    "microsoft/phi-3.5-vision-instruct",
+    "mistralai/pixtral-12b",
     "moonshotai/moondream2",
     "llava-hf/llava-1.5-7b-hf",
   ],
@@ -233,6 +288,7 @@ export function resolveRemoteEntryDownloadSource(
   entry: Pick<RemoteLibraryEntry, "id" | "downloadSource">
 ): LibraryDownloadSource {
   if (entry.downloadSource) return entry.downloadSource;
+  if (catalogIdToCommunityGgufDownloadUrl(entry.id)) return "huggingface";
   if (isGatedHfCatalogId(entry.id)) return "huggingface";
   return "lmstudio";
 }

@@ -82,9 +82,9 @@ The in-app **Setup Guide** and **tutorial** walk through each step with illustra
 
 ### Download
 
-- **Install guide** — [dead-stone.github.io/lm-link/install.html](https://dead-stone.github.io/lm-link/install.html) (Play Store, APK, setup)  
-- **Play Store** — *rolling out* (`com.lmlink.android`)  
-- **APK** — [GitHub Releases](https://github.com/Dead-Stone/lm-link/releases/latest)  
+- **Install guide** — [dead-stone.github.io/lm-link/install.html](https://dead-stone.github.io/lm-link/install.html)  
+- **Production** — Google Play (`com.lmlink.android`) — *rolling out*  
+- **Pre-production APK** — [GitHub Releases](https://github.com/Dead-Stone/lm-link/releases/latest) (preview builds for testers; upload from `builds/` after `npm run build:apk:local`)  
 - **Build from source** — see [Development](#development) below  
 
 ---

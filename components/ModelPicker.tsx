@@ -2026,7 +2026,11 @@ export function RemoteModelList({
         <View style={librarySectionStyles.sectionBlock}>
           <Text style={librarySectionStyles.sectionTitle}>Installed on Mac</Text>
           {visibleLibraryModels.map((item) => (
-            <AnimatedLibraryRow key={item.id} rowKey={item.id}>
+            <AnimatedLibraryRow
+              key={item.id}
+              rowKey={item.id}
+              animateEnter={!libraryLayout}
+            >
               {renderModelRow(item)}
             </AnimatedLibraryRow>
           ))}
@@ -2045,7 +2049,11 @@ export function RemoteModelList({
           <Text style={librarySectionStyles.sectionTitle}>Loaded in memory</Text>
           <SectionHintLines colors={colors} line="Swipe left to eject" />
           {loadedLibraryModels.map((item) => (
-            <AnimatedLibraryRow key={item.id} rowKey={item.id}>
+            <AnimatedLibraryRow
+              key={item.id}
+              rowKey={item.id}
+              animateEnter={!libraryLayout}
+            >
               {renderModelRow(item)}
             </AnimatedLibraryRow>
           ))}
@@ -2061,7 +2069,11 @@ export function RemoteModelList({
           <Text style={librarySectionStyles.sectionTitle}>Installed on Mac</Text>
           <SectionHintLines colors={colors} line="Swipe right to load" />
           {installedLibraryModels.map((item) => (
-            <AnimatedLibraryRow key={item.id} rowKey={item.id}>
+            <AnimatedLibraryRow
+              key={item.id}
+              rowKey={item.id}
+              animateEnter={!libraryLayout}
+            >
               {renderModelRow(item)}
             </AnimatedLibraryRow>
           ))}

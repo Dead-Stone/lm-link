@@ -21,6 +21,8 @@ type WalkProps = {
   active?: boolean;
   /** Rise from below the dock — tutorial slide 0 only. */
   emergeFromBottom?: boolean;
+  /** Pin head pose — no Lottie loop or slide-change motion. */
+  staticHead?: boolean;
 };
 
 type NoteProps = {
@@ -31,6 +33,8 @@ type NoteProps = {
 /** Left column — Lottie drawn smaller than slot so antennae are not edge-clipped. */
 const TUTORIAL_SPRITE_SIZE = 58;
 const TUTORIAL_SPRITE_SLOT = 72;
+/** Reserve space in each slide so illustrations clear the pinned mascot. */
+export const TUTORIAL_GUIDE_DOCK_MIN_HEIGHT = 132;
 const BUBBLE_HEAD_GAP = 4;
 const BUBBLE_RADIUS = 14;
 const BUBBLE_TAIL = 10;
@@ -130,10 +134,11 @@ export default function TutorialAndroidGuide({
   isDark = true,
   active = true,
   emergeFromBottom = false,
+  staticHead = false,
 }: WalkProps) {
   const styles = useMemo(() => createWalkStyles(colors), [colors]);
   const bubbleFill = isDark ? colors.surface : colors.bgElevated;
-  const spriteStepKey = active ? stepKey : -1;
+  const spriteStepKey = staticHead ? 0 : active ? stepKey : -1;
   const typingDelay = emergeFromBottom && active ? 380 : 70;
   const bubbleLift = useSharedValue(emergeFromBottom && active ? 14 : 8);
   const bubbleOpacity = useSharedValue(0);
@@ -189,6 +194,7 @@ export default function TutorialAndroidGuide({
           anchorBottom
           stepKey={spriteStepKey}
           emergeFromBottom={emergeFromBottom}
+          staticPose={staticHead}
         />
       </View>
     </View>

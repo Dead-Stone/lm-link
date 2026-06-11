@@ -294,7 +294,7 @@ class LocalModelDownloadStore {
     const status = this.getState(key).status;
     if (status === "idle" || status === "ready") return true;
     if (err != null && isDownloadCancelledError(err)) return true;
-    return !this.jobs[key] && status !== "downloading" && status !== "paused";
+    return false;
   }
 
   private bumpRevision() {
@@ -557,7 +557,6 @@ class LocalModelDownloadStore {
     deleteModelFile(model.filename);
     this.resetToIdle(key);
     this.bumpRevision();
-    this.abortingKeys.delete(key);
   }
 
   clearError(key: string, filename?: string) {

@@ -1634,12 +1634,12 @@ export function LocalModelsManager({
 
   const quickAccessLocalModels = useMemo(() => {
     if (!showQuickDownloadLocal || searchQuery.trim()) return [];
-    return getQuickAccessLocalModels().filter(
+    return getQuickAccessLocalModels(effectiveCapabilityFilter).filter(
       (model) =>
         displayState(model.key).status !== "ready" ||
         localModelDownloadStore.isActive(model.key)
     );
-  }, [showQuickDownloadLocal, searchQuery, displayState, downloadRevision]);
+  }, [showQuickDownloadLocal, searchQuery, effectiveCapabilityFilter, displayState, downloadRevision]);
 
   const quickAccessLocalKeySet = useMemo(
     () => new Set<string>(QUICK_ACCESS_LOCAL_MODEL_KEYS),

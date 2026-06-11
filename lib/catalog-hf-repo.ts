@@ -51,12 +51,22 @@ export function catalogIdToHuggingFaceDownloadUrl(catalogId: string): string | n
   return `https://huggingface.co/${repoId}`;
 }
 
-/** Curated Q4_K_M GGUF links — avoids gated meta-llama repos (missing USE_POLICY.md). */
-const META_LLAMA_GGUF_DOWNLOADS: Record<string, string> = {
+/** Curated Q4_K_M GGUF links — avoids gated repos and missing LM Studio catalog entries. */
+const CURATED_GGUF_DOWNLOADS: Record<string, string> = {
   "meta-llama/llama-3.2-1b-instruct":
     "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf",
   "meta-llama/llama-3.2-3b-instruct":
     "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+  "google/gemma-3n-e4b":
+    "https://huggingface.co/lmstudio-community/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf",
+  "google/gemma-3n-e2b":
+    "https://huggingface.co/lmstudio-community/gemma-3n-E2B-it-GGUF/resolve/main/gemma-3n-E2B-it-Q4_K_M.gguf",
+  "qwen/qwen2.5-vl-3b-instruct":
+    "https://huggingface.co/lmstudio-community/Qwen2.5-VL-3B-Instruct-GGUF/resolve/main/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf",
+  "qwen/qwen2.5-vl-7b-instruct":
+    "https://huggingface.co/lmstudio-community/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf",
+  "qwen/qwen3-vl-4b":
+    "https://huggingface.co/lmstudio-community/Qwen3-VL-4B-Instruct-GGUF/resolve/main/Qwen3-VL-4B-Instruct-Q4_K_M.gguf",
 };
 
 function huggingFaceRepoIdFromUrl(value: string): string | null {
@@ -87,7 +97,7 @@ export function huggingFaceRepoRequiresAuth(repoId: string): boolean {
  */
 export function catalogIdToCommunityGgufDownloadUrl(catalogId: string): string | null {
   const key = normalizeModelKey(catalogId);
-  for (const [catalogKey, url] of Object.entries(META_LLAMA_GGUF_DOWNLOADS)) {
+  for (const [catalogKey, url] of Object.entries(CURATED_GGUF_DOWNLOADS)) {
     if (normalizeModelKey(catalogKey) === key) return url;
   }
 

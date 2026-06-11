@@ -7,257 +7,746 @@ permalink: /install.html
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="Install LM Link for Android — chat with LM Studio on your phone over Wi‑Fi or run models on-device." />
-  <title>Install — LM Link for Android</title>
+  <meta name="description" content="Install LM Link for Android — the free, open-source client for LM Studio. Chat over Wi‑Fi or run GGUF models on your phone." />
+  <meta name="theme-color" content="#5b4fcf" />
+  <meta property="og:title" content="Install LM Link for Android" />
+  <meta property="og:description" content="Chat with LM Studio from your phone — remote over Wi‑Fi or on-device GGUF models." />
+  <meta property="og:image" content="https://raw.githubusercontent.com/Dead-Stone/lm-link/master/assets/icon.png" />
+  <meta property="og:type" content="website" />
+  <title>Install LM Link for Android</title>
+  <link rel="icon" href="https://raw.githubusercontent.com/Dead-Stone/lm-link/master/assets/favicon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --bg: #0f0f12;
-      --surface: #1a1a22;
-      --text: #f4f4f5;
-      --muted: #a1a1aa;
+      --bg: #07070a;
+      --bg-elevated: #111118;
+      --surface: rgba(255, 255, 255, 0.045);
+      --surface-hover: rgba(255, 255, 255, 0.07);
+      --text: #fafafa;
+      --text-secondary: #c4c4cc;
+      --muted: #8b8b96;
       --brand: #5b4fcf;
-      --brand-light: #7c6cf0;
-      --border: rgba(255, 255, 255, 0.1);
-      --radius: 14px;
-      --max: 640px;
+      --brand-mid: #7c6cf0;
+      --brand-glow: #a78bfa;
+      --brand-dim: rgba(91, 79, 207, 0.22);
+      --green: #34d399;
+      --green-dim: rgba(52, 211, 153, 0.14);
+      --border: rgba(255, 255, 255, 0.09);
+      --border-strong: rgba(255, 255, 255, 0.14);
+      --radius: 20px;
+      --radius-sm: 14px;
+      --max: 720px;
+      --font-display: "Plus Jakarta Sans", system-ui, sans-serif;
+      --font-body: "Inter", system-ui, sans-serif;
     }
 
-    * { box-sizing: border-box; }
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
 
     body {
       margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-family: var(--font-body);
       background: var(--bg);
       color: var(--text);
-      line-height: 1.55;
+      line-height: 1.6;
       -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
     }
 
-    .wrap {
+    .bg {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    .bg-orb {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(80px);
+      opacity: 0.55;
+      animation: drift 18s ease-in-out infinite alternate;
+    }
+
+    .bg-orb-1 {
+      width: min(90vw, 520px);
+      height: min(90vw, 520px);
+      top: -12%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: radial-gradient(circle, rgba(124, 108, 240, 0.55) 0%, transparent 70%);
+    }
+
+    .bg-orb-2 {
+      width: 320px;
+      height: 320px;
+      bottom: 10%;
+      right: -8%;
+      background: radial-gradient(circle, rgba(91, 79, 207, 0.35) 0%, transparent 70%);
+      animation-delay: -6s;
+    }
+
+    .bg-grid {
+      position: absolute;
+      inset: 0;
+      background-image: radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px);
+      background-size: 28px 28px;
+      mask-image: linear-gradient(to bottom, black 0%, transparent 85%);
+      opacity: 0.35;
+    }
+
+    @keyframes drift {
+      from { transform: translateX(-50%) translateY(0); }
+      to { transform: translateX(-48%) translateY(24px); }
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(16px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(124, 108, 240, 0.35), 0 20px 60px rgba(91, 79, 207, 0.35); }
+      50% { box-shadow: 0 0 0 12px rgba(124, 108, 240, 0), 0 24px 70px rgba(91, 79, 207, 0.45); }
+    }
+
+    .page {
+      position: relative;
+      z-index: 1;
       max-width: var(--max);
       margin: 0 auto;
-      padding: 32px 20px 48px;
+      padding: 0 20px 64px;
     }
 
     .hero {
       text-align: center;
-      margin-bottom: 36px;
+      padding: 48px 0 40px;
+      animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
     }
 
-    .icon {
-      width: 88px;
-      height: 88px;
-      border-radius: 22px;
-      margin: 0 auto 16px;
+    .hero-mark {
+      width: 120px;
+      height: 120px;
+      margin: 0 auto 28px;
+      border-radius: 28px;
       display: block;
-      box-shadow: 0 12px 40px rgba(91, 79, 207, 0.35);
+      animation: pulse-glow 4s ease-in-out infinite;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--brand-glow);
+      margin-bottom: 14px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      background: var(--brand-dim);
+      border: 1px solid rgba(167, 139, 250, 0.25);
+    }
+
+    .eyebrow-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 10px var(--green);
     }
 
     h1 {
-      margin: 0 0 8px;
-      font-size: 1.75rem;
-      font-weight: 700;
-      letter-spacing: -0.02em;
+      font-family: var(--font-display);
+      font-size: clamp(2.25rem, 7vw, 3rem);
+      font-weight: 800;
+      letter-spacing: -0.035em;
+      line-height: 1.08;
+      margin: 0 0 16px;
     }
 
-    .tagline {
-      margin: 0;
-      color: var(--muted);
-      font-size: 1rem;
-    }
-
-    section {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 20px 18px;
-      margin-bottom: 16px;
-    }
-
-    h2 {
-      margin: 0 0 12px;
-      font-size: 0.72rem;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--muted);
-    }
-
-    p { margin: 0 0 12px; }
-    p:last-child { margin-bottom: 0; }
-
-    .actions {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
+    h1 .suffix {
+      display: block;
+      font-size: 0.52em;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: var(--text-secondary);
       margin-top: 4px;
     }
 
-    .btn {
-      display: block;
-      text-align: center;
-      text-decoration: none;
-      font-weight: 600;
-      font-size: 1rem;
-      padding: 14px 18px;
-      border-radius: 12px;
-      border: 1px solid transparent;
-      transition: opacity 0.15s ease;
+    .lede {
+      margin: 0 auto;
+      max-width: 34ch;
+      font-size: 1.0625rem;
+      color: var(--text-secondary);
+      line-height: 1.65;
     }
 
-    .btn:hover { opacity: 0.9; }
+    .pills {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 24px;
+    }
+
+    .pill {
+      font-size: 0.8125rem;
+      font-weight: 500;
+      color: var(--muted);
+      padding: 7px 14px;
+      border-radius: 999px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+    }
+
+    .cta-block {
+      animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.1s both;
+      margin-bottom: 20px;
+    }
+
+    .cta-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    @media (min-width: 560px) {
+      .cta-grid { grid-template-columns: 1fr 1fr; }
+    }
+
+    .cta-card {
+      position: relative;
+      padding: 22px 20px 20px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: linear-gradient(165deg, var(--surface) 0%, rgba(255, 255, 255, 0.02) 100%);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      overflow: hidden;
+      transition: border-color 0.2s ease, transform 0.2s ease;
+    }
+
+    .cta-card::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      border-radius: var(--radius) var(--radius) 0 0;
+    }
+
+    .cta-card-preview::before {
+      background: linear-gradient(90deg, var(--brand), var(--brand-glow));
+    }
+
+    .cta-card-production::before {
+      background: linear-gradient(90deg, #22c55e, var(--green));
+    }
+
+    .cta-card:hover {
+      border-color: var(--border-strong);
+      transform: translateY(-2px);
+    }
+
+    .cta-badge {
+      display: inline-block;
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border-radius: 8px;
+      margin-bottom: 12px;
+    }
+
+    .cta-badge-preview {
+      color: var(--brand-glow);
+      background: var(--brand-dim);
+    }
+
+    .cta-badge-production {
+      color: var(--green);
+      background: var(--green-dim);
+    }
+
+    .cta-card h3 {
+      font-family: var(--font-display);
+      font-size: 1.125rem;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+
+    .cta-card p {
+      margin: 0 0 18px;
+      font-size: 0.9rem;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      text-decoration: none;
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 0.9375rem;
+      padding: 14px 18px;
+      border-radius: var(--radius-sm);
+      border: 1px solid transparent;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+    }
+
+    .btn:active { transform: translateY(0); }
 
     .btn-primary {
-      background: linear-gradient(135deg, var(--brand-light), var(--brand));
       color: #fff;
+      background: linear-gradient(135deg, var(--brand-mid) 0%, var(--brand) 100%);
+      box-shadow: 0 8px 28px rgba(91, 79, 207, 0.4);
+    }
+
+    .btn-primary:hover {
+      box-shadow: 0 12px 36px rgba(91, 79, 207, 0.5);
     }
 
     .btn-secondary {
-      background: transparent;
       color: var(--text);
-      border-color: var(--border);
+      background: var(--surface);
+      border-color: var(--border-strong);
     }
 
     .btn-muted {
-      background: rgba(255, 255, 255, 0.06);
       color: var(--muted);
+      background: rgba(255, 255, 255, 0.04);
+      border-color: var(--border);
       cursor: default;
+      pointer-events: none;
     }
 
-    .note {
+    .btn svg {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+    }
+
+    .cta-note {
+      text-align: center;
       font-size: 0.875rem;
       color: var(--muted);
-      margin-top: 10px;
+      margin: 14px 4px 0;
+      line-height: 1.55;
     }
 
-    ol, ul {
+    .cta-note a {
+      color: var(--brand-glow);
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .cta-note a:hover { text-decoration: underline; }
+
+    .section {
+      animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.18s both;
+      margin-bottom: 16px;
+      padding: 24px 22px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+    }
+
+    .section h2 {
+      font-family: var(--font-display);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 0 0 18px;
+    }
+
+    .steps {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 36px 1fr;
+      gap: 14px;
+      padding: 16px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .step:last-child { border-bottom: none; padding-bottom: 0; }
+    .step:first-child { padding-top: 0; }
+
+    .step-num {
+      width: 36px;
+      height: 36px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: 0.875rem;
+      color: var(--brand-glow);
+      background: var(--brand-dim);
+      border: 1px solid rgba(167, 139, 250, 0.2);
+    }
+
+    .step-body {
+      font-size: 0.9375rem;
+      color: var(--text-secondary);
+      padding-top: 6px;
+    }
+
+    .step-body strong { color: var(--text); font-weight: 600; }
+
+    .step-body a {
+      color: var(--brand-glow);
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .step-body a:hover { text-decoration: underline; }
+
+    .feature-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 10px;
+    }
+
+    .feature-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      font-size: 0.9375rem;
+      color: var(--text-secondary);
+    }
+
+    .feature-list li::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      margin-top: 8px;
+      border-radius: 50%;
+      background: var(--brand-mid);
+      flex-shrink: 0;
+      box-shadow: 0 0 12px rgba(124, 108, 240, 0.5);
+    }
+
+    .feature-list a {
+      color: var(--brand-glow);
+      text-decoration: none;
+    }
+
+    .feature-list a:hover { text-decoration: underline; }
+
+    .meta-line {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+      font-size: 0.8125rem;
+      color: var(--muted);
+    }
+
+    code {
+      font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+      font-size: 0.85em;
+      background: rgba(255, 255, 255, 0.07);
+      padding: 2px 7px;
+      border-radius: 6px;
+      color: var(--text-secondary);
+    }
+
+    details.advanced {
+      margin-bottom: 16px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.02);
+      overflow: hidden;
+    }
+
+    details.advanced summary {
+      cursor: pointer;
+      padding: 16px 20px;
+      font-family: var(--font-display);
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--muted);
+      list-style: none;
+      user-select: none;
+    }
+
+    details.advanced summary::-webkit-details-marker { display: none; }
+
+    details.advanced summary::after {
+      content: "+";
+      float: right;
+      font-weight: 400;
+      color: var(--brand-glow);
+    }
+
+    details.advanced[open] summary::after { content: "−"; }
+
+    details.advanced .inner {
+      padding: 0 20px 18px;
+      font-size: 0.875rem;
+      color: var(--muted);
+    }
+
+    details.advanced ol {
       margin: 0;
       padding-left: 1.2rem;
     }
 
-    li { margin-bottom: 8px; }
-    li:last-child { margin-bottom: 0; }
-
-    code {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 0.88em;
-      background: rgba(255, 255, 255, 0.08);
-      padding: 2px 6px;
-      border-radius: 6px;
-    }
+    details.advanced li { margin-bottom: 8px; }
+    details.advanced a { color: var(--brand-glow); }
 
     footer {
-      margin-top: 28px;
       text-align: center;
-      font-size: 0.8rem;
-      color: var(--muted);
-      line-height: 1.6;
+      padding-top: 32px;
+      animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.25s both;
     }
 
-    footer a {
-      color: var(--brand-light);
+    .footer-links {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px 20px;
+      margin-bottom: 20px;
+    }
+
+    .footer-links a {
+      color: var(--text-secondary);
       text-decoration: none;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: color 0.15s ease;
     }
 
-    footer a:hover { text-decoration: underline; }
+    .footer-links a:hover { color: var(--brand-glow); }
 
     .disclaimer {
-      margin-top: 16px;
       font-size: 0.75rem;
+      color: var(--muted);
+      line-height: 1.65;
+      max-width: 48ch;
+      margin: 0 auto;
       opacity: 0.85;
     }
+
+    .open-source {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 20px;
+      font-size: 0.8125rem;
+      color: var(--muted);
+    }
+
+    .open-source svg { opacity: 0.7; }
   </style>
 </head>
 <body>
-  <main class="wrap">
+  <div class="bg" aria-hidden="true">
+    <div class="bg-orb bg-orb-1"></div>
+    <div class="bg-orb bg-orb-2"></div>
+    <div class="bg-grid"></div>
+  </div>
+
+  <div class="page">
     <header class="hero">
       <img
-        class="icon"
-        src="https://raw.githubusercontent.com/Dead-Stone/lm-link/master/assets/icon.png"
-        width="88"
-        height="88"
-        alt="LM Link app icon"
+        class="hero-mark"
+        src="https://raw.githubusercontent.com/Dead-Stone/lm-link/master/assets/hero-animation.gif"
+        width="120"
+        height="120"
+        alt="LM Link — animated brand mark"
       />
-      <h1>LM Link for Android</h1>
-      <p class="tagline">Chat with LM Studio on your Mac or PC over Wi‑Fi — or run GGUF models on your phone.</p>
+      <p class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span> Free · Open source · MIT</p>
+      <h1>
+        LM Link
+        <span class="suffix">for Android</span>
+      </h1>
+      <p class="lede">
+        The mobile client for <a href="https://lmstudio.ai" style="color: var(--brand-glow); text-decoration: none; font-weight: 500;">LM Studio</a>.
+        Chat with models on your Mac or PC over Wi‑Fi — or run GGUF models on your phone.
+      </p>
+      <div class="pills" role="list">
+        <span class="pill" role="listitem">Remote streaming</span>
+        <span class="pill" role="listitem">On-device GGUF</span>
+        <span class="pill" role="listitem">Vision chat</span>
+        <span class="pill" role="listitem">Private · on your LAN</span>
+      </div>
     </header>
 
-    <section aria-labelledby="install-heading">
-      <h2 id="install-heading">Install</h2>
-      <div class="actions">
-        <a
-          class="btn btn-primary"
-          id="play-store-link"
-          href="https://play.google.com/store/apps/details?id=com.lmlink.android"
-          rel="noopener noreferrer"
-        >
-          Get it on Google Play
-        </a>
-        <a
-          class="btn btn-secondary"
-          href="https://github.com/Dead-Stone/lm-link/releases/latest"
-          rel="noopener noreferrer"
-        >
-          Download APK (GitHub Releases)
-        </a>
+    <section class="cta-block" aria-labelledby="install-heading">
+      <h2 id="install-heading" class="visually-hidden">Install</h2>
+      <div class="cta-grid">
+        <article class="cta-card cta-card-preview">
+          <span class="cta-badge cta-badge-preview">Pre-production</span>
+          <h3>GitHub Releases</h3>
+          <p>Official preview APKs for testers and early adopters — updated before each Play Store release.</p>
+          <a class="btn btn-primary" href="https://github.com/Dead-Stone/lm-link/releases/latest" rel="noopener noreferrer">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+            Download preview APK
+          </a>
+        </article>
+
+        <article class="cta-card cta-card-production">
+          <span class="cta-badge cta-badge-production">Production</span>
+          <h3>Google Play</h3>
+          <p>Stable release for everyone — same package, automatic updates when live.</p>
+          <a
+            class="btn btn-secondary"
+            id="play-store-link"
+            href="https://play.google.com/store/apps/details?id=com.lmlink.android"
+            rel="noopener noreferrer"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3.609 1.814 13.792 12 3.61 22.186a1.004 1.004 0 0 1-.61-.92V2.734a1.004 1.004 0 0 1 .609-.92zm3.196 4.96 9.653 5.6-2.316 2.316-7.337-7.337v-.579zm0 11.452 7.337-7.337 2.316 2.316-9.653 5.6v-.579zM5.864 2.658 14.76 8.79l-2.47 2.47L5.864 2.658zm0 18.684 6.426-8.602 2.47 2.47-8.896 6.132z"/></svg>
+            Get it on Google Play
+          </a>
+        </article>
       </div>
-      <p class="note" id="play-store-note">
-        Google Play listing is rolling out. If the store link is not live yet, use the APK or
-        <a href="mailto:mohanmoganti2023@gmail.com?subject=LM%20Link%20Android%20beta%20tester">email us</a>
-        to join the closed test.
+      <p class="cta-note" id="play-store-note">
+        Play Store rolling out?
+        <a href="https://github.com/Dead-Stone/lm-link/releases/latest">Grab the preview APK</a>
+        or
+        <a href="mailto:mohanmoganti2023@gmail.com?subject=LM%20Link%20Android%20beta%20tester">join the closed test</a>.
       </p>
     </section>
 
-    <section aria-labelledby="apk-heading">
-      <h2 id="apk-heading">Install the APK</h2>
-      <ol>
-        <li>Download the latest <strong>preview APK</strong> from GitHub Releases.</li>
-        <li>On your phone, open the file and tap <strong>Install</strong>.</li>
-        <li>If Android asks, allow installs from your browser or file manager (<em>Install unknown apps</em>).</li>
-        <li>Open <strong>LM Link</strong> from your home screen.</li>
+    <section class="section" aria-labelledby="apk-heading">
+      <h2 id="apk-heading">Install preview APK</h2>
+      <ol class="steps">
+        <li class="step">
+          <span class="step-num">1</span>
+          <div class="step-body">
+            Open <a href="https://github.com/Dead-Stone/lm-link/releases/latest">GitHub Releases</a> and download
+            <code>lm-link-preview-*.apk</code>.
+          </div>
+        </li>
+        <li class="step">
+          <span class="step-num">2</span>
+          <div class="step-body">On your phone, open the file and tap <strong>Install</strong>.</div>
+        </li>
+        <li class="step">
+          <span class="step-num">3</span>
+          <div class="step-body">If prompted, allow installs from your browser (<em>Install unknown apps</em>).</div>
+        </li>
+        <li class="step">
+          <span class="step-num">4</span>
+          <div class="step-body">Launch <strong>LM Link</strong> — the in-app tutorial guides setup.</div>
+        </li>
       </ol>
-      <p class="note">Package ID: <code>com.lmlink.android</code></p>
+      <p class="meta-line">Package <code>com.lmlink.android</code> · Previews ship on GitHub first</p>
     </section>
 
-    <section aria-labelledby="needs-heading">
+    <section class="section" aria-labelledby="needs-heading">
       <h2 id="needs-heading">What you need</h2>
-      <ul>
+      <ul class="feature-list">
         <li>Android phone or tablet (recent version recommended)</li>
         <li>Same Wi‑Fi as your Mac or PC for <strong>remote</strong> chat</li>
-        <li><a href="https://lmstudio.ai" style="color: var(--brand-light);">LM Studio</a> 0.4+ on your computer (for remote mode)</li>
-        <li>Optional: storage space for on-device GGUF models</li>
+        <li><a href="https://lmstudio.ai">LM Studio 0.4+</a> on your computer (remote mode)</li>
+        <li>Optional storage for on-device GGUF models</li>
       </ul>
     </section>
 
-    <section aria-labelledby="start-heading">
-      <h2 id="start-heading">After installing</h2>
-      <ol>
-        <li>On your computer: load a model in LM Studio → <strong>Developer</strong> → enable <strong>Serve on Local Network</strong> and <strong>CORS</strong> → <strong>Start Server</strong>.</li>
-        <li>In LM Link: <strong>Settings → Connection</strong> → scan the network or paste your server URL (e.g. <code>http://192.168.1.5:1234/v1</code>) → <strong>Test</strong> → <strong>Save</strong>.</li>
-        <li>Open a chat and pick a model from the bar at the bottom.</li>
+    <section class="section" aria-labelledby="start-heading">
+      <h2 id="start-heading">Quick start</h2>
+      <ol class="steps">
+        <li class="step">
+          <span class="step-num">1</span>
+          <div class="step-body">
+            On your computer: load a model → <strong>Developer</strong> → enable
+            <strong>Local Network</strong> + <strong>CORS</strong> → <strong>Start Server</strong>.
+          </div>
+        </li>
+        <li class="step">
+          <span class="step-num">2</span>
+          <div class="step-body">
+            In LM Link: <strong>Settings → Connection</strong> → scan or paste
+            <code>http://192.168.x.x:1234/v1</code> → <strong>Test</strong> → <strong>Save</strong>.
+          </div>
+        </li>
+        <li class="step">
+          <span class="step-num">3</span>
+          <div class="step-body">Open a chat and pick a model from the footer.</div>
+        </li>
       </ol>
-      <p class="note">The in-app tutorial walks through each step with illustrations.</p>
     </section>
 
-    <section aria-labelledby="build-heading">
-      <h2 id="build-heading">Build from source</h2>
-      <p>Developers can clone the repo and run <code>npm install</code> then <code>npm run android</code> or <code>npm run build:apk:local</code>.</p>
-      <p><a href="https://github.com/Dead-Stone/lm-link" style="color: var(--brand-light);">github.com/Dead-Stone/lm-link</a></p>
-    </section>
+    <details class="advanced">
+      <summary>For maintainers &amp; developers</summary>
+      <div class="inner">
+        <p><strong>Publish a preview:</strong></p>
+        <ol>
+          <li><code>npm run build:apk:local</code> → APK in <code>builds/</code></li>
+          <li>
+            <a href="https://github.com/Dead-Stone/lm-link/releases/new">Create a GitHub Release</a>
+            (e.g. <code>v1.0.0-preview.1</code>) and attach the APK
+          </li>
+          <li>Share this install page with testers</li>
+        </ol>
+        <p style="margin-top: 14px;">
+          <strong>Build from source:</strong>
+          <a href="https://github.com/Dead-Stone/lm-link">github.com/Dead-Stone/lm-link</a>
+          — <code>npm install</code>, <code>npm run android</code>
+        </p>
+      </div>
+    </details>
 
     <footer>
-      <p>
-        <a href="./">Privacy policy</a>
-        ·
-        <a href="./THIRD_PARTY_NOTICES.html">Open source licenses</a>
-        ·
-        <a href="https://github.com/Dead-Stone/lm-link">Source code</a>
-      </p>
+      <nav class="footer-links" aria-label="Legal and source">
+        <a href="./">Privacy</a>
+        <a href="./THIRD_PARTY_NOTICES.html">Licenses</a>
+        <a href="https://github.com/Dead-Stone/lm-link">GitHub</a>
+        <a href="https://lmstudio.ai">LM Studio</a>
+      </nav>
       <p class="disclaimer">
         LM Link is an independent open-source project. Not affiliated with, endorsed by, or sponsored by LM Studio or Element Labs Inc.
       </p>
+      <p class="open-source">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+        Open source under MIT
+      </p>
     </footer>
-  </main>
+  </div>
+
+  <style>
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+  </style>
 
   <script>
     (function () {
@@ -265,12 +754,14 @@ permalink: /install.html
       var note = document.getElementById("play-store-note");
       if (!play || !note) return;
 
-      var params = new URLSearchParams(window.location.search);
-      if (params.get("play") === "soon") {
+      if (new URLSearchParams(window.location.search).get("play") === "soon") {
         play.className = "btn btn-muted";
         play.removeAttribute("href");
-        play.textContent = "Google Play — coming soon";
+        play.innerHTML = "Google Play — coming soon";
         play.setAttribute("aria-disabled", "true");
+        note.innerHTML =
+          'Until Play is live, install the <a href="https://github.com/Dead-Stone/lm-link/releases/latest">preview APK on GitHub</a> or ' +
+          '<a href="mailto:mohanmoganti2023@gmail.com?subject=LM%20Link%20Android%20beta%20tester">request closed testing</a>.';
       }
     })();
   </script>

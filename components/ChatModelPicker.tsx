@@ -69,7 +69,7 @@ import { LMModel, ModelPlatform, Settings } from "../lib/types";
 import { isSameModelId } from "../lib/model-id";
 import { createModalTheme } from "../lib/modal-theme";
 import { modalPageTopPadding } from "../lib/safe-area-layout";
-import DismissAffordance from "./DismissAffordance";
+import SheetSwipeHint, { SHEET_SWIPE_HINT_BAND } from "./SheetSwipeHint";
 import SwipeDismissSheet, { SwipeDismissSheetHandle } from "./SwipeDismissSheet";
 import { getSettingsPalette, radii, ThemeColors, useTheme } from "../lib/theme";
 import ThemedError from "./ThemedError";
@@ -1245,7 +1245,7 @@ function LocalModelPanel({
               <Text style={styles.localSectionLabel}>Installed on device</Text>
               <SectionHintLines colors={colors} line="Swipe right to load · swipe left to delete" />
               {idleReadyModels.map((model) => (
-                <AnimatedLibraryRow key={model.key} rowKey={model.key}>
+                <AnimatedLibraryRow key={model.key} rowKey={model.key} animateEnter={false}>
                   <LocalModelRow
                     model={model}
                     ready
@@ -1352,7 +1352,7 @@ export default function ChatModelPicker({
   const pickerActionBusy = remoteLoadPending;
   const sheetContentLive = visible || sheetExiting;
   const chooseModelDismissZone =
-    modalPageTopPadding(insets.top) + 8 + CHOOSE_MODEL_HEADER_BAND;
+    modalPageTopPadding(insets.top) + SHEET_SWIPE_HINT_BAND + CHOOSE_MODEL_HEADER_BAND;
   const onSheetScroll = useAnimatedScrollHandler({
     onScroll: (event) => {
       sheetScrollOffsetY.value = event.contentOffset.y;
@@ -1633,11 +1633,23 @@ export default function ChatModelPicker({
         style={[
           modalStyles.pageContainer,
           styles.sheetPage,
-          { paddingTop: modalPageTopPadding(insets.top) + 8 },
+          { paddingTop: modalPageTopPadding(insets.top) },
         ]}
       >
+        <SheetSwipeHint colors={palette} onPress={handleRequestClose} />
+
         <View style={modalStyles.pageHeader}>
-          <DismissAffordance kind="down" colors={palette} onPress={handleRequestClose} />
+          <Pressable
+            onPress={handleRequestClose}
+            hitSlop={8}
+            style={modalStyles.pageHeaderBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+          >
+            <View style={modalStyles.closeCircle}>
+              <Ionicons name="close" size={18} color={palette.textMuted} />
+            </View>
+          </Pressable>
           <Text style={modalStyles.pageTitle}>Choose Model</Text>
           <View style={modalStyles.pageHeaderBtn} />
         </View>
@@ -1685,7 +1697,7 @@ export default function ChatModelPicker({
               />
             </View>
 
-            {tab === "remote" ? (
+            <View style={[styles.tabPanel, tab !== "remote" && styles.tabPanelHidden]}>
               <RemoteModelList
                 active={sheetContentLive && tab === "remote" && !showLibrary}
                 prefetchedModels={prefetchedRemoteModels}
@@ -1712,7 +1724,8 @@ export default function ChatModelPicker({
                   onOpenSettings();
                 }}
               />
-            ) : (
+            </View>
+            <View style={[styles.tabPanel, tab !== "local" && styles.tabPanelHidden]}>
               <LocalModelPanel
                 active={sheetContentLive && tab === "local" && !showLibrary}
                 activeChatMode={chatMode}
@@ -1728,7 +1741,7 @@ export default function ChatModelPicker({
                 colors={palette}
                 bottomInset={0}
               />
-            )}
+            </View>
           </View>
         </AnimatedGHScrollView>
         </GestureDetector>
@@ -1970,6 +1983,8 @@ function createStyles(colors: ThemeColors) {
       marginBottom: 2,
     },
     tabsWrap: { paddingHorizontal: 16, paddingTop: 2, paddingBottom: 6 },
+    tabPanel: {},
+    tabPanelHidden: { display: "none" },
     localCapabilityFilters: {
       paddingHorizontal: 0,
       paddingBottom: 4,

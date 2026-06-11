@@ -4,6 +4,9 @@
  */
 export const GITHUB_REPO = "https://github.com/Dead-Stone/lm-link";
 
+/** Pre-production APKs — publish preview builds from `builds/` here before Play Store. */
+export const GITHUB_RELEASES_URL = `${GITHUB_REPO}/releases/latest`;
+
 /** Public site — enable GitHub Pages: Settings → Pages → branch `master`, folder `/docs`. */
 export const GITHUB_PAGES_BASE = "https://dead-stone.github.io/lm-link";
 

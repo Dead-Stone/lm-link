@@ -28,7 +28,10 @@ import { getSettingsPalette, ThemeColors, useTheme } from "../lib/theme";
 import DotGridBackground from "./DotGridBackground";
 import SetupGuideIllustration from "./SetupGuideIllustrations";
 import TransparentSheet from "./TransparentSheet";
-import TutorialAndroidGuide, { TutorialSlideNote } from "./TutorialAndroidGuide";
+import TutorialAndroidGuide, {
+  TUTORIAL_GUIDE_DOCK_MIN_HEIGHT,
+  TutorialSlideNote,
+} from "./TutorialAndroidGuide";
 import TutorialProgressDots from "./TutorialProgressDots";
 import TutorialSlideFrame from "./TutorialSlideFrame";
 
@@ -62,6 +65,7 @@ export default function FirstLaunchTutorial({
 
   const listRef = useRef<FlatList<TutorialSlide>>(null);
   const [page, setPage] = useState(0);
+  const [shouldEmergeHead] = useState(true);
   const scrollX = useSharedValue(0);
   const headerOpacity = useSharedValue(1);
   const headerTranslateY = useSharedValue(0);
@@ -69,6 +73,7 @@ export default function FirstLaunchTutorial({
 
   const isLast = page === SLIDES.length - 1;
   const currentSlide = SLIDES[page];
+  const slideNoteBarHeight = 14 + 16 + Math.max(insets.bottom, 12) + 8;
 
   useEffect(() => {
     if (!isGlass) return;
@@ -174,16 +179,7 @@ export default function FirstLaunchTutorial({
             ) : null}
           </ScrollView>
 
-          <View style={[styles.guideDock, index === 0 && styles.guideDockEmergeClip]}>
-            <TutorialAndroidGuide
-              walk={item.androidWalk}
-              stepKey={index}
-              colors={colors}
-              isDark={isDark}
-              active={isActive}
-              emergeFromBottom={index === 0}
-            />
-          </View>
+          <View style={styles.guideSpacer} />
 
           <View
             style={[
@@ -201,8 +197,10 @@ export default function FirstLaunchTutorial({
   const dotFadeTop = insets.top + 80;
   const dotFadeBottom = insets.bottom + 200;
 
+  const panelBg = isGlass ? "transparent" : colors.bg;
+
   const body = (
-    <>
+    <View style={styles.bodyShell}>
       {!isGlass ? (
         <View style={styles.dotBgLayer} pointerEvents="none">
           <DotGridBackground mood={0.5} fadeTop={dotFadeTop} fadeBottom={dotFadeBottom} active />
@@ -302,7 +300,25 @@ export default function FirstLaunchTutorial({
         })}
         keyboardShouldPersistTaps="handled"
       />
-    </>
+
+      <View
+        style={[
+          styles.fixedGuideDock,
+          { bottom: slideNoteBarHeight, backgroundColor: panelBg },
+        ]}
+        pointerEvents="box-none"
+      >
+        <TutorialAndroidGuide
+          walk={currentSlide.androidWalk}
+          stepKey={page}
+          colors={colors}
+          isDark={isDark}
+          active
+          staticHead
+          emergeFromBottom={shouldEmergeHead}
+        />
+      </View>
+    </View>
   );
 
   if (isGlass) {
@@ -331,6 +347,10 @@ function createStyles(
 
   return StyleSheet.create({
     root: { flex: 1, backgroundColor: colors.bg },
+    bodyShell: {
+      flex: 1,
+      position: "relative",
+    },
     glassRoot: {
       ...StyleSheet.absoluteFillObject,
       zIndex: 150,
@@ -427,15 +447,17 @@ function createStyles(
       flexGrow: 1,
       paddingBottom: 8,
     },
-    guideDock: {
+    guideSpacer: {
+      minHeight: TUTORIAL_GUIDE_DOCK_MIN_HEIGHT,
+    },
+    fixedGuideDock: {
+      position: "absolute",
+      left: 0,
+      right: 0,
       paddingHorizontal: 16,
       paddingTop: 10,
-      paddingBottom: 0,
-      backgroundColor: panelBg,
+      zIndex: 2,
       overflow: "visible",
-    },
-    guideDockEmergeClip: {
-      overflow: "hidden",
     },
     slideNoteWrap: {
       paddingHorizontal: 20,

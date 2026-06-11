@@ -84,7 +84,9 @@ export function isDownloadCancelledError(err: unknown): boolean {
     raw.includes("abort") ||
     raw.includes("aborted") ||
     raw.includes("user canceled") ||
-    raw.includes("user cancelled")
+    raw.includes("user cancelled") ||
+    raw.includes("download has been") ||
+    raw.includes("stopped by user")
   );
 }
 

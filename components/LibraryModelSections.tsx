@@ -12,10 +12,17 @@ const ROW_EXIT = FadeOut.duration(240);
 export function AnimatedLibraryRow({
   children,
   rowKey,
+  animateEnter = true,
 }: {
   children: React.ReactNode;
   rowKey: string;
+  /** Off for swipe rows — FadeIn exposes green/red action layers behind the row. */
+  animateEnter?: boolean;
 }) {
+  if (!animateEnter) {
+    return <View key={rowKey}>{children}</View>;
+  }
+
   return (
     <Animated.View
       key={rowKey}

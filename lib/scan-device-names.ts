@@ -91,6 +91,17 @@ export function formatServerHost(url: string): string {
   }
 }
 
+/** Prefer a saved connection name, then Bonjour / hostname / stable random label. */
+export function resolveConnectionDisplayName(
+  url: string,
+  customName?: string | null,
+  bonjourName?: string | null
+): string {
+  const trimmed = customName?.trim();
+  if (trimmed) return trimmed;
+  return resolveServerDisplayName(url, bonjourName);
+}
+
 /** Prefer Bonjour name, then non-IP hostname, else a stable random label per URL. */
 export function resolveServerDisplayName(url: string, bonjourName?: string | null): string {
   if (bonjourName) {

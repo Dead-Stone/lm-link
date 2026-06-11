@@ -26,6 +26,10 @@ type Props = {
   monochrome?: boolean;
   /** LM Studio / Hugging Face badge on the shell corner. */
   catalogSource?: LibraryDownloadSource | null;
+  /** Scales the catalog source badge relative to `size` (default 0.4). */
+  catalogSourceScale?: number;
+  /** Platform shell only — no inner provider / placeholder mark (empty deck slots). */
+  shellOnly?: boolean;
 };
 
 export default function ModelModeBadgeIcon({
@@ -40,6 +44,8 @@ export default function ModelModeBadgeIcon({
   colorfulLogo = false,
   monochrome = false,
   catalogSource = null,
+  catalogSourceScale = 0.4,
+  shellOnly = false,
 }: Props) {
   const logoMonochrome = colorfulLogo ? false : monochrome;
   const resolvedPlatform =
@@ -48,21 +54,23 @@ export default function ModelModeBadgeIcon({
   const shellIcon = platformShellIcon(resolvedPlatform);
   const { logoScale, logoTop } = platformShellLayout(resolvedPlatform, size);
   const logoSize = Math.max(8, Math.round(size * logoScale));
-  const sourceBadgeSize = Math.max(9, Math.round(size * 0.4));
+  const sourceBadgeSize = Math.max(8, Math.round(size * catalogSourceScale));
 
   return (
     <View style={[styles.wrap, { width: size, height: size }]}>
       <Ionicons name={shellIcon} size={size} color={color} />
-      <View style={[styles.logo, { top: logoTop, width: size, height: logoSize }]}>
-        <ModelProviderIcon
-          provider={provider ?? parsed?.family ?? label}
-          family={parsed?.family}
-          modelId={modelId ?? label}
-          size={logoSize}
-          color={color}
-          monochrome={logoMonochrome}
-        />
-      </View>
+      {!shellOnly ? (
+        <View style={[styles.logo, { top: logoTop, width: size, height: logoSize }]}>
+          <ModelProviderIcon
+            provider={provider ?? parsed?.family ?? label}
+            family={parsed?.family}
+            modelId={modelId ?? label}
+            size={logoSize}
+            color={color}
+            monochrome={logoMonochrome}
+          />
+        </View>
+      ) : null}
       {catalogSource ? (
         <View
           style={[

@@ -1,10 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, {
-  forwardRef,
   useCallback,
   useEffect,
-  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -32,8 +30,11 @@ import SetupGuideModal from "./SetupGuideModal";
 import SettingsCreatorFooter from "./SettingsCreatorFooter";
 import DismissAffordance from "./DismissAffordance";
 import { useHubNavigation } from "../lib/hub-navigation";
-import { LOCAL_MODEL_CATALOG } from "../lib/local-models";
+import { LOCAL_MODEL_CATALOG, IS_EXPO_GO } from "../lib/local-models";
+import { LocalDeviceStorageBar } from "./LocalModelsSection";
 import ThemedConfirmDialog from "./ThemedConfirmDialog";
+import PcDownloadConsentSheet from "./PcDownloadConsentSheet";
+import { usePcDownloadFromPhoneConsent } from "../lib/use-pc-download-consent";
 import { formatConnectionTestError } from "../lib/errors";
 import {
   getEffectiveLocalServerUrl,
@@ -43,13 +44,18 @@ import {
 } from "../lib/api";
 import { LMAccount, sanitizeApiToken, saveAccount } from "../lib/auth";
 import { normalizeServerInputUrl } from "../lib/connection-string";
-import { formatServerHost, resolveServerDisplayName } from "../lib/scan-device-names";
+import {
+  formatServerHost,
+  resolveConnectionDisplayName,
+  resolveServerDisplayName,
+} from "../lib/scan-device-names";
 import { useApp } from "../lib/context";
 import { SecureCredentialError } from "../lib/storage";
 import { Settings } from "../lib/types";
 import { createModalTheme } from "../lib/modal-theme";
-import { createScreenHeaderTitleStyle } from "../lib/typography";
-import { getSettingsPalette, radii, ThemeColors, useTheme } from "../lib/theme";
+import { screenHeaderTopPadding } from "../lib/safe-area-layout";
+import { getSettingsPalette, ThemeColors, useTheme } from "../lib/theme";
+import { createConnPanelStyles, createMainStyles } from "./SettingsPanel.styles";
 import {
   footerBottomPadding,
   keyboardLift,
@@ -57,11 +63,6 @@ import {
 } from "../lib/use-keyboard-inset";
 
 /** Sub-headings and explanatory copy on the settings screen */
-const SETTINGS_SUBTEXT = {
-  fontSize: 12,
-  lineHeight: 16,
-} as const;
-
 function useSettingsColors() {
   const { colors, isDark } = useTheme();
   return useMemo(() => getSettingsPalette(colors, isDark), [colors, isDark]);
@@ -400,13 +401,34 @@ function ConnectionStatusIcon({
   );
 }
 
-export type LocalConnectionPanelHandle = {
-  collapsePanels: () => void;
-};
-
-const LocalConnectionPanel = forwardRef<
-  LocalConnectionPanelHandle,
-  {
+function LocalConnectionPanel({
+  localBaseUrl,
+  setLocalBaseUrl,
+  savedLocalUrl,
+  connectionName,
+  setConnectionName,
+  localApiToken,
+  setLocalApiToken,
+  savedApiToken,
+  localHfToken,
+  setLocalHfToken,
+  savedHfToken,
+  showLocalToken,
+  setShowLocalToken,
+  showLocalHfToken,
+  setShowLocalHfToken,
+  connStatus,
+  connMessage,
+  setConnStatus,
+  setConnMessage,
+  onTest,
+  onSave,
+  onScan,
+  macDownloadConfigured,
+  saving,
+  showAdvanced,
+  setShowAdvanced,
+}: {
   localBaseUrl: string;
   setLocalBaseUrl: (v: string) => void;
   savedLocalUrl: string;
@@ -434,38 +456,7 @@ const LocalConnectionPanel = forwardRef<
   saving: boolean;
   showAdvanced: boolean;
   setShowAdvanced: (open: boolean) => void;
-  }
->(function LocalConnectionPanel(
-  {
-    localBaseUrl,
-    setLocalBaseUrl,
-    savedLocalUrl,
-    connectionName,
-    setConnectionName,
-    localApiToken,
-    setLocalApiToken,
-    savedApiToken,
-    localHfToken,
-    setLocalHfToken,
-    savedHfToken,
-    showLocalToken,
-    setShowLocalToken,
-    showLocalHfToken,
-    setShowLocalHfToken,
-    connStatus,
-    connMessage,
-    setConnStatus,
-    setConnMessage,
-    onTest,
-    onSave,
-    onScan,
-    macDownloadConfigured,
-    saving,
-    showAdvanced,
-    setShowAdvanced,
-  },
-  ref
-) {
+}) {
   const colors = useSettingsColors();
   const { styles, connPanelStyles } = useSettingsStyles();
   const trimmedUrl = localBaseUrl.trim();
@@ -476,17 +467,6 @@ const LocalConnectionPanel = forwardRef<
   const isConnected = !!savedLocalUrl.trim();
   const [expanded, setExpanded] = useState(!isConnected);
   const wasSavingRef = useRef(false);
-
-  useImperativeHandle(
-    ref,
-    () => ({
-      collapsePanels: () => {
-        if (isConnected && expanded) setExpanded(false);
-        if (showAdvanced) setShowAdvanced(false);
-      },
-    }),
-    [expanded, isConnected, setShowAdvanced, showAdvanced]
-  );
 
   const summaryPan = useMemo(
     () =>
@@ -787,7 +767,7 @@ const LocalConnectionPanel = forwardRef<
       ) : null}
     </View>
   );
-});
+}
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
@@ -870,8 +850,16 @@ export default function SettingsPanel() {
   const { styles } = useSettingsStyles();
 
   const [showModelLibrary, setShowModelLibrary] = useState(false);
+  const [storageRevision, setStorageRevision] = useState(0);
   const [showScanner, setShowScanner] = useState(false);
   const [showSetupGuide, setShowSetupGuide] = useState(false);
+  const {
+    enabled: pcDownloadsEnabled,
+    enable: enablePcDownloads,
+    disable: disablePcDownloads,
+  } = usePcDownloadFromPhoneConsent();
+  const [pcConsentSheetOpen, setPcConsentSheetOpen] = useState(false);
+  const [pcDisableConfirmOpen, setPcDisableConfirmOpen] = useState(false);
 
   const savedLocalUrl = useMemo(
     () => getEffectiveLocalServerUrl(settings),
@@ -883,7 +871,7 @@ export default function SettingsPanel() {
   const [connMessage, setConnMessage] = useState<string>("");
   const [localBaseUrl, setLocalBaseUrl] = useState(savedLocalUrl);
   const [localConnectionName, setLocalConnectionName] = useState(() =>
-    resolveServerDisplayName(savedLocalUrl)
+    resolveConnectionDisplayName(savedLocalUrl, settings.serverConnectionName)
   );
   const [savingLocal, setSavingLocal] = useState(false);
   const savedApiToken = settings.apiKey ?? account?.token ?? "";
@@ -895,8 +883,6 @@ export default function SettingsPanel() {
   const [localAdvancedOpen, setLocalAdvancedOpen] = useState(false);
   const [localPrompt, setLocalPrompt] = useState(settings.defaultSystemPrompt);
   const [showClearDataConfirm, setShowClearDataConfirm] = useState(false);
-  const connectionPanelRef = useRef<LocalConnectionPanelHandle>(null);
-
   const openLocalConnectionAdvanced = useCallback(() => {
     setShowModelLibrary(false);
     setLocalAdvancedOpen(true);
@@ -907,9 +893,13 @@ export default function SettingsPanel() {
   useEffect(() => {
     setLocalBaseUrl(savedLocalUrl);
     if (savedLocalUrl) {
-      setLocalConnectionName((prev) => prev || resolveServerDisplayName(savedLocalUrl));
+      setLocalConnectionName(
+        (prev) =>
+          prev ||
+          resolveConnectionDisplayName(savedLocalUrl, settings.serverConnectionName)
+      );
     }
-  }, [savedLocalUrl]);
+  }, [savedLocalUrl, settings.serverConnectionName]);
   useEffect(() => {
     setLocalApiToken(savedApiToken);
   }, [savedApiToken]);
@@ -960,9 +950,12 @@ export default function SettingsPanel() {
     try {
       const token = sanitizeApiToken(localApiToken);
       const hfToken = sanitizeApiToken(localHfToken);
+      const connectionName = localConnectionName.trim();
       const patch: Partial<typeof settings> = {
         ...(token ? { apiKey: token } : {}),
-        hfToken: hfToken || undefined,
+        // "" explicitly clears; saveSettings preserves stored token when omitted.
+        hfToken,
+        serverConnectionName: connectionName || undefined,
       };
       if (isHubUrl(settings.baseUrl)) {
         await updateSettings({ ...patch, localServerUrl: url });
@@ -986,13 +979,22 @@ export default function SettingsPanel() {
     } finally {
       setSavingLocal(false);
     }
-  }, [localBaseUrl, localApiToken, localHfToken, updateSettings, settings.baseUrl, account, setAccount]);
+  }, [
+    localBaseUrl,
+    localApiToken,
+    localHfToken,
+    localConnectionName,
+    updateSettings,
+    settings.baseUrl,
+    account,
+    setAccount,
+  ]);
 
   const localModelInfo = LOCAL_MODEL_CATALOG.find((m) => m.key === settings.defaultLocalModel);
 
   return (
     <View style={styles.container}>
-      <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
+      <View style={[styles.topBar, { paddingTop: screenHeaderTopPadding(insets.top) }]}>
         <DismissAffordance kind="left" colors={colors} onPress={openChat} />
         <Text style={styles.topBarTitle}>Settings</Text>
         <View style={styles.topBarBtn} />
@@ -1005,12 +1007,10 @@ export default function SettingsPanel() {
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
           automaticallyAdjustKeyboardInsets
-          onScrollBeginDrag={() => connectionPanelRef.current?.collapsePanels()}
         >
         {/* ── Connection ── */}
         <Section title="Connection">
           <LocalConnectionPanel
-              ref={connectionPanelRef}
               localBaseUrl={localBaseUrl}
               setLocalBaseUrl={setLocalBaseUrl}
               savedLocalUrl={savedLocalUrl}
@@ -1042,6 +1042,14 @@ export default function SettingsPanel() {
 
         {/* ── Models ── */}
         <Section title="Models">
+          {!IS_EXPO_GO ? (
+            <>
+              <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+                <LocalDeviceStorageBar refreshKey={storageRevision} />
+              </View>
+              <Divider />
+            </>
+          ) : null}
           <Pressable onPress={() => setShowModelLibrary(true)} style={styles.row}>
             <Ionicons name="library-outline" size={20} color={colors.textMuted} />
             <View style={styles.rowBody}>
@@ -1057,6 +1065,30 @@ export default function SettingsPanel() {
             </View>
             <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
           </Pressable>
+          <Divider />
+          <View style={styles.switchRow}>
+            <View style={styles.switchLabel}>
+              <Ionicons name="desktop-outline" size={20} color={colors.textMuted} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowLabel}>Download to Mac/PC</Text>
+                <Text style={styles.switchSub}>
+                  Start computer model installs from Model Library (one-way; delete on desktop only)
+                </Text>
+              </View>
+            </View>
+            <Switch
+              value={pcDownloadsEnabled}
+              onValueChange={(next) => {
+                if (next) {
+                  setPcConsentSheetOpen(true);
+                  return;
+                }
+                setPcDisableConfirmOpen(true);
+              }}
+              trackColor={{ false: colors.borderStrong, true: colors.primary }}
+              thumbColor={pcDownloadsEnabled ? colors.primaryLight : colors.switchTrackOff}
+            />
+          </View>
           <Divider />
           <View style={styles.switchRow}>
             <View style={styles.switchLabel}>
@@ -1197,11 +1229,42 @@ export default function SettingsPanel() {
         onCancel={() => setShowClearDataConfirm(false)}
       />
 
+      <PcDownloadConsentSheet
+        visible={pcConsentSheetOpen}
+        mode={pcDownloadsEnabled ? "manage" : "enable"}
+        enabled={pcDownloadsEnabled}
+        onEnable={() => {
+          void enablePcDownloads().then(() => setPcConsentSheetOpen(false));
+        }}
+        onDisable={() => {
+          setPcConsentSheetOpen(false);
+          setPcDisableConfirmOpen(true);
+        }}
+        onClose={() => setPcConsentSheetOpen(false)}
+      />
+
+      <ThemedConfirmDialog
+        visible={pcDisableConfirmOpen}
+        title="Disable Mac/PC downloads?"
+        message="Download buttons for computer models will be hidden in Model Library. Downloads already running on your Mac or PC are not stopped — cancel those in LM Studio on the desktop."
+        confirmLabel="Disable"
+        cancelLabel="Keep enabled"
+        destructive
+        onConfirm={() => {
+          void disablePcDownloads();
+          setPcDisableConfirmOpen(false);
+        }}
+        onCancel={() => setPcDisableConfirmOpen(false)}
+      />
+
       <SetupGuideModal visible={showSetupGuide} onClose={() => setShowSetupGuide(false)} />
 
       <ModelLibraryModal
         visible={showModelLibrary}
-        onClose={() => setShowModelLibrary(false)}
+        onClose={() => {
+          setShowModelLibrary(false);
+          setStorageRevision((revision) => revision + 1);
+        }}
       />
       <NetworkScanModal
         visible={showScanner}
@@ -1221,410 +1284,3 @@ export default function SettingsPanel() {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-function createConnPanelStyles(colors: ThemeColors) {
-  return StyleSheet.create({
-  body: { paddingHorizontal: 14, paddingTop: 8, paddingBottom: 10 },
-  statusRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 8,
-  },
-  statusCopy: { flex: 1, minWidth: 0, gap: 1 },
-  statusTitle: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: "600",
-    letterSpacing: -0.1,
-  },
-  statusSubtitle: {
-    color: colors.textMuted,
-    ...SETTINGS_SUBTEXT,
-  },
-  statusIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-    position: "relative",
-  },
-  statusIconConnected: {
-    backgroundColor: "rgba(46, 125, 50, 0.12)",
-  },
-  statusIconDisconnected: {
-    backgroundColor: "rgba(220, 38, 38, 0.1)",
-  },
-  statusIconEmpty: {
-    backgroundColor: colors.surfaceHover,
-  },
-  statusIconNeutral: {
-    backgroundColor: colors.surfaceHover,
-  },
-  summaryRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 4,
-    marginBottom: 4,
-  },
-  summaryCopy: { flex: 1, minWidth: 0, gap: 1 },
-  summaryName: {
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: "600",
-    letterSpacing: -0.15,
-  },
-  summaryUrl: {
-    color: colors.textMuted,
-    fontSize: 12,
-    fontFamily: "Courier",
-  },
-  desc: {
-    color: colors.textMuted,
-    ...SETTINGS_SUBTEXT,
-    marginBottom: 10,
-    marginTop: 6,
-  },
-  fieldBlock: {
-    marginBottom: 8,
-  },
-  fieldLabel: {
-    color: colors.textMuted,
-    ...SETTINGS_SUBTEXT,
-    fontWeight: "500",
-    marginBottom: 4,
-  },
-  fieldInput: {
-    color: colors.inputText,
-    fontSize: 15,
-    lineHeight: 22,
-    paddingVertical: 4,
-    paddingHorizontal: 0,
-    margin: 0,
-  },
-  fieldInputMono: {
-    fontFamily: "Courier",
-    fontSize: 13,
-  },
-  optionsGroup: {
-    gap: 2,
-    marginTop: 2,
-    marginBottom: 2,
-  },
-  optionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingVertical: 8,
-  },
-  optionPressed: { opacity: 0.65 },
-  optionLabel: {
-    flex: 1,
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: "500",
-  },
-  actionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginTop: 8,
-  },
-  secondaryBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    backgroundColor: colors.surfaceHover,
-    borderRadius: radii.sm,
-    paddingVertical: 10,
-  },
-  secondaryBtnText: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  advancedBlock: {
-    marginTop: 2,
-    marginBottom: 4,
-    gap: 6,
-  },
-  advancedHint: {
-    color: colors.textDim,
-    fontSize: 11,
-    lineHeight: 15,
-  },
-  advancedHintSpaced: {
-    marginTop: 8,
-  },
-  advancedInputWrap: {
-    position: "relative",
-    paddingRight: 32,
-  },
-  advancedInput: {
-    paddingRight: 0,
-  },
-  advancedInputPlain: {
-    fontFamily: undefined,
-  },
-  advancedEye: {
-    position: "absolute",
-    right: 10,
-    top: 0,
-    bottom: 0,
-    justifyContent: "center",
-  },
-  advancedError: {
-    color: colors.error,
-    fontSize: 12,
-    marginTop: 8,
-    lineHeight: 16,
-  },
-  saveBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    backgroundColor: colors.primary,
-    borderRadius: radii.sm,
-    paddingVertical: 10,
-  },
-  saveBtnText: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  btnDisabled: { opacity: 0.45 },
-  });
-}
-
-function createMainStyles(colors: ThemeColors) {
-  return StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
-  topBar: {
-    paddingBottom: 10,
-    paddingHorizontal: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  topBarBtn: { width: 36, alignItems: "center", justifyContent: "center" },
-  topBarTitle: createScreenHeaderTitleStyle(colors),
-  scroll: { paddingHorizontal: 16 },
-  creatorFooter: {
-    marginTop: 2,
-    overflow: "visible",
-  },
-
-  section: { marginBottom: 14 },
-  sectionTitle: {
-    color: colors.textDim,
-    ...SETTINGS_SUBTEXT,
-    fontWeight: "600",
-    letterSpacing: 0.5,
-    textTransform: "uppercase",
-    marginBottom: 4,
-    paddingHorizontal: 4,
-  },
-  group: {
-    backgroundColor: colors.bgElevated,
-    borderRadius: radii.lg,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    overflow: "hidden",
-  },
-  divider: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.border,
-    marginLeft: 14,
-  },
-
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  rowBody: { flex: 1, minWidth: 0 },
-  rowLabel: { color: colors.text, fontSize: 15, fontWeight: "500" },
-  rowValue: { color: colors.textMuted, ...SETTINGS_SUBTEXT, marginTop: 2 },
-  rowValueMuted: { color: colors.textDim },
-  modelSummaryRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 2,
-  },
-  modelSummaryItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    flexShrink: 1,
-    maxWidth: "100%",
-  },
-  modelSummaryText: {
-    color: colors.textMuted,
-    ...SETTINGS_SUBTEXT,
-    flexShrink: 1,
-  },
-  modelSummarySep: {
-    color: colors.textDim,
-    ...SETTINGS_SUBTEXT,
-  },
-
-  urlLabelRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 8,
-    paddingHorizontal: 16,
-  },
-  fieldLabel: { color: colors.textMuted, ...SETTINGS_SUBTEXT },
-  helperBtn: { flexDirection: "row", alignItems: "center", gap: 4 },
-  helperBtnText: { color: colors.primaryLight, ...SETTINGS_SUBTEXT, fontWeight: "500" },
-
-  urlInputRow: {
-    backgroundColor: colors.surfaceHover,
-    borderRadius: radii.md,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginHorizontal: 16,
-    marginBottom: 8,
-  },
-  urlInput: { color: colors.inputText, fontSize: 14, fontFamily: "Courier" },
-
-  mono: { fontFamily: "Courier", color: colors.textMuted },
-  monoBlue: { fontFamily: "Courier", color: colors.primaryLight },
-
-  connResultOk: {
-    color: "#22c55e",
-    fontSize: 12,
-    fontWeight: "600",
-    lineHeight: 16,
-    marginTop: 6,
-  },
-  connResultError: {
-    color: colors.error,
-    fontSize: 12,
-    fontWeight: "600",
-    lineHeight: 16,
-    marginTop: 6,
-  },
-  connResultDebug: {
-    color: colors.textDim,
-    fontSize: 11,
-    lineHeight: 15,
-    fontFamily: "Courier",
-    marginTop: 4,
-    paddingHorizontal: 16,
-  },
-
-  genParamRow: { paddingHorizontal: 14, paddingVertical: 11, gap: 8 },
-  genParamHeader: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  genParamTitleWrap: { flexDirection: "row", alignItems: "flex-start", gap: 10, flex: 1 },
-  genParamTitleBody: { flex: 1, minWidth: 0, gap: 2 },
-  genParamHint: { color: colors.textMuted, ...SETTINGS_SUBTEXT },
-  genValueTap: {
-    flexShrink: 0,
-    paddingHorizontal: 4,
-    paddingVertical: 2,
-  },
-  genValueTapPressed: { opacity: 0.65 },
-  genValueText: { color: colors.primaryLight, fontSize: 16, fontWeight: "700" },
-  genSliderWrap: {
-    position: "relative",
-    height: 36,
-    justifyContent: "center",
-    paddingVertical: 6,
-  },
-  track: {
-    height: 6,
-    backgroundColor: colors.borderStrong,
-    borderRadius: 3,
-    overflow: "hidden",
-    position: "relative",
-  },
-  fill: {
-    position: "absolute",
-    left: 0,
-    top: 0,
-    bottom: 0,
-    borderRadius: 3,
-    backgroundColor: colors.primary,
-  },
-  genThumb: {
-    position: "absolute",
-    width: 22,
-    height: 22,
-    marginLeft: -11,
-    top: 7,
-    borderRadius: 11,
-    backgroundColor: colors.primaryLight,
-    borderWidth: 3,
-    borderColor: colors.bg,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-    elevation: 3,
-  },
-  genEditInput: {
-    color: colors.inputText,
-    fontSize: 28,
-    fontWeight: "700",
-    textAlign: "center",
-    paddingVertical: 12,
-    borderRadius: radii.md,
-    backgroundColor: colors.surfaceHover,
-  },
-  sliderBounds: { flexDirection: "row", justifyContent: "space-between" },
-  bound: { color: colors.textDim, ...SETTINGS_SUBTEXT },
-
-  promptBlock: {
-    paddingHorizontal: 14,
-    paddingTop: 10,
-    paddingBottom: 12,
-    gap: 10,
-  },
-  promptLabelRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
-  },
-  promptInput: {
-    color: colors.inputText,
-    fontSize: 14,
-    lineHeight: 22,
-    minHeight: 80,
-    textAlignVertical: "top",
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    borderRadius: radii.sm,
-    backgroundColor: colors.surfaceHover,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  switchRow: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  switchLabel: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
-  switchSub: { color: colors.textMuted, ...SETTINGS_SUBTEXT, marginTop: 2 },
-  });
-}

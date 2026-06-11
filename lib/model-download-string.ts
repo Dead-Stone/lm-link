@@ -1,3 +1,7 @@
+import {
+  catalogIdToCommunityGgufDownloadUrl,
+  catalogIdToHuggingFaceDownloadUrl,
+} from "./catalog-hf-repo";
 import { isPlausibleCatalogModelId } from "./catalog-model-id";
 import { LibraryDownloadSource, REMOTE_MODEL_LIBRARY } from "./remote-model-library";
 
@@ -37,18 +41,55 @@ export function resolveRemoteDownloadModelString(
 
   const catalogMatch = REMOTE_MODEL_LIBRARY.find((entry) => entry.id === trimmed);
   if (catalogMatch) {
+    if (catalogMatch.downloadModel?.trim()) {
+      return catalogMatch.downloadModel.trim();
+    }
+    const communityGguf = catalogIdToCommunityGgufDownloadUrl(catalogMatch.id);
+    if (communityGguf) return communityGguf;
+    if (catalogMatch.downloadSource === "huggingface") {
+      const hfUrl = catalogIdToHuggingFaceDownloadUrl(catalogMatch.id);
+      if (hfUrl) return hfUrl;
+    }
     return catalogMatch.id;
   }
 
-  // LM Studio hub catalog ids (org/model) — not always the same as a HF repo path.
+  // LM Studio catalog ids (org/model). Hugging Face repos use provider/Model-Name casing.
   if (isPlausibleCatalogModelId(trimmed)) {
+    const communityGguf = catalogIdToCommunityGgufDownloadUrl(trimmed);
+    if (communityGguf) return communityGguf;
     if (options?.downloadSource === "huggingface") {
+      const hfUrl = catalogIdToHuggingFaceDownloadUrl(trimmed);
+      if (hfUrl) return hfUrl;
       return `https://huggingface.co/${trimmed.replace(/^\/+/, "")}`;
     }
     return trimmed;
   }
 
   return trimmed;
+}
+
+/** True when the query looks like a direct on-device GGUF download link. */
+export function looksLikeLocalGgufDownloadQuery(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!trimmed) return false;
+  if (/\.gguf(?:\?|$)/i.test(trimmed)) return true;
+  if (
+    (/^https?:\/\//i.test(trimmed) || /huggingface\.co/i.test(trimmed) || /^hf\.co\//i.test(trimmed)) &&
+    /\/resolve\//i.test(trimmed)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Resolve a GGUF URL when valid; returns null instead of throwing. */
+export function tryResolveLocalGgufDownloadUrl(raw: string): string | null {
+  if (!looksLikeLocalGgufDownloadQuery(raw)) return null;
+  try {
+    return resolveLocalGgufDownloadUrl(raw);
+  } catch {
+    return null;
+  }
 }
 
 /** Normalize a pasted link for on-device GGUF download. */

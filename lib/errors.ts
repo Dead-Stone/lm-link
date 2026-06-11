@@ -75,6 +75,19 @@ export function errorFromUnknown(err: unknown, fallback = "Something went wrong"
   return fallback;
 }
 
+/** True when a download was stopped by the user — not a failure to surface. */
+export function isDownloadCancelledError(err: unknown): boolean {
+  const raw = errorFromUnknown(err, "").toLowerCase();
+  if (!raw) return false;
+  return (
+    raw.includes("cancel") ||
+    raw.includes("abort") ||
+    raw.includes("aborted") ||
+    raw.includes("user canceled") ||
+    raw.includes("user cancelled")
+  );
+}
+
 /** User-facing copy for Settings → Test connection (plain inline text, no chrome). */
 export function formatConnectionTestError(message: string): string {
   const trimmed = message.trim();

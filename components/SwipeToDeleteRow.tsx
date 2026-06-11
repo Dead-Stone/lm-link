@@ -1,22 +1,30 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-import React, { useMemo, useRef } from "react";
-import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
-import Swipeable from "react-native-gesture-handler/Swipeable";
+import React, { useCallback, useMemo } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from "react-native-reanimated";
+import {
+  GESTURE_SPRING_ROW,
+  projectTranslation,
+  rubberBandClamp,
+  shouldOpenSwipe,
+} from "../lib/gesture-motion";
 import { useTheme } from "../lib/theme";
 
 const SWIPE_ICON_SIZE = 26;
 
-/** Reversed eject-outline — load into memory (downward). */
-function LoadIcon({ color }: { color: string }) {
-  return (
-    <View style={{ transform: [{ scaleY: -1 }] }}>
-      <MaterialCommunityIcons name="eject-outline" size={SWIPE_ICON_SIZE} color={color} />
-    </View>
-  );
-}
-
 const LOAD_ACTION_WIDTH = 92;
 const EJECT_ACTION_WIDTH = 88;
+const DELETE_ACTION_WIDTH = 84;
+const LOAD_SWIPE_GREEN = "#22c55e";
+const DELETE_SWIPE_RED = "#ef4444";
+const LOAD_ACTION_INK = "#ffffff";
+const OPEN_VELOCITY = 420;
 
 type Props = {
   children: React.ReactNode;
@@ -25,6 +33,8 @@ type Props = {
   /** Swipe left to reveal — eject / clear selection. */
   onEject?: () => void;
   onDelete?: () => void;
+  /** Which edge reveals delete — default right (swipe left). Use left for chat list rows. */
+  deleteReveal?: "left" | "right";
   disabled?: boolean;
   loadDisabled?: boolean;
   ejectDisabled?: boolean;
@@ -36,173 +46,230 @@ export default function SwipeToDeleteRow({
   onLoad,
   onEject,
   onDelete,
+  deleteReveal = "right",
   disabled = false,
   loadDisabled = false,
   ejectDisabled = false,
   backgroundColor,
 }: Props) {
-  const { colors, isDark } = useTheme();
+  const { isDark } = useTheme();
   const styles = useMemo(() => createStyles(), []);
-  const loadInk = isDark ? "#4ade80" : "#16a34a";
   const ejectInk = isDark ? "#8e8e93" : "#aeaeb2";
-  const swipeableRef = useRef<Swipeable>(null);
 
-  if (disabled || (!onLoad && !onDelete && !onEject)) {
+  const translateX = useSharedValue(0);
+  const dragStartX = useSharedValue(0);
+
+  const deleteOnLeft = deleteReveal === "left" && !!onDelete;
+  const leftRevealWidth = onLoad
+    ? LOAD_ACTION_WIDTH
+    : deleteOnLeft
+      ? DELETE_ACTION_WIDTH
+      : 0;
+  const rightRevealWidth =
+    (onEject ? EJECT_ACTION_WIDTH : 0) +
+    (onDelete && !deleteOnLeft ? DELETE_ACTION_WIDTH : 0);
+
+  if (disabled || (leftRevealWidth === 0 && rightRevealWidth === 0)) {
     return <>{children}</>;
   }
 
-  const runLoad = () => {
+  const closeRow = useCallback(() => {
+    translateX.value = withSpring(0, GESTURE_SPRING_ROW);
+  }, [translateX]);
+
+  const runLoad = useCallback(() => {
     if (!onLoad || loadDisabled) return;
-    swipeableRef.current?.close();
+    closeRow();
     onLoad();
-  };
+  }, [closeRow, loadDisabled, onLoad]);
 
-  const runEject = () => {
+  const runEject = useCallback(() => {
     if (!onEject || ejectDisabled) return;
-    swipeableRef.current?.close();
+    closeRow();
     onEject();
-  };
+  }, [closeRow, ejectDisabled, onEject]);
 
-  const runDelete = () => {
+  const runDelete = useCallback(() => {
     if (!onDelete) return;
-    swipeableRef.current?.close();
+    closeRow();
     onDelete();
-  };
+  }, [closeRow, onDelete]);
 
-  const renderLeftActions = onLoad
-    ? (
-        _progress: Animated.AnimatedInterpolation<number>,
-        dragX: Animated.AnimatedInterpolation<number>
-      ) => {
-        const translateX = dragX.interpolate({
-          inputRange: [0, LOAD_ACTION_WIDTH],
-          outputRange: [-LOAD_ACTION_WIDTH, 0],
-          extrapolate: "clamp",
-        });
+  const canAutoLoad = !!(onLoad && !loadDisabled);
+  const canAutoEject = !!(onEject && !ejectDisabled);
 
-        return (
-          <Animated.View style={[styles.loadAction, { transform: [{ translateX }] }]}>
+  const pan = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX([-10, 10])
+        .failOffsetY([-16, 16])
+        .onBegin(() => {
+          "worklet";
+          dragStartX.value = translateX.value;
+        })
+        .onUpdate((event) => {
+          "worklet";
+          const raw = dragStartX.value + event.translationX;
+          translateX.value = rubberBandClamp(raw, -rightRevealWidth, leftRevealWidth);
+        })
+        .onEnd((event) => {
+          "worklet";
+          const projected = projectTranslation(translateX.value, event.velocityX);
+          const leftThreshold = leftRevealWidth * 0.42;
+          const rightThreshold = rightRevealWidth * 0.42;
+
+          if (
+            leftRevealWidth > 0 &&
+            shouldOpenSwipe(projected, event.velocityX, leftThreshold, OPEN_VELOCITY, 1)
+          ) {
+            if (canAutoLoad) {
+              translateX.value = withSpring(leftRevealWidth, GESTURE_SPRING_ROW);
+              runOnJS(runLoad)();
+              return;
+            }
+            if (deleteOnLeft) {
+              translateX.value = withSpring(leftRevealWidth, GESTURE_SPRING_ROW);
+              return;
+            }
+          }
+
+          if (
+            rightRevealWidth > 0 &&
+            shouldOpenSwipe(projected, event.velocityX, rightThreshold, OPEN_VELOCITY, -1)
+          ) {
+            if (canAutoEject) {
+              translateX.value = withSpring(-rightRevealWidth, GESTURE_SPRING_ROW);
+              runOnJS(runEject)();
+              return;
+            }
+            translateX.value = withSpring(-rightRevealWidth, GESTURE_SPRING_ROW);
+            return;
+          }
+
+          translateX.value = withSpring(0, GESTURE_SPRING_ROW);
+        }),
+    [
+      canAutoEject,
+      canAutoLoad,
+      deleteOnLeft,
+      dragStartX,
+      leftRevealWidth,
+      rightRevealWidth,
+      runEject,
+      runLoad,
+      translateX,
+    ]
+  );
+
+  const rowStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
+
+  return (
+    <View style={styles.root}>
+      <View style={styles.actionsLayer} pointerEvents="box-none">
+        {onLoad ? (
+          <View style={styles.loadAction}>
             <Pressable
-              style={styles.loadActionPressable}
+              style={[styles.loadActionPressable, loadDisabled && styles.actionPressableDisabled]}
               onPress={runLoad}
               disabled={loadDisabled}
               accessibilityLabel="Load model"
             >
-              <LoadIcon color={loadInk} />
+              <Ionicons name="play-circle" size={SWIPE_ICON_SIZE} color={LOAD_ACTION_INK} />
               <Text
                 style={[
                   styles.actionLabel,
-                  { color: loadInk },
+                  styles.loadActionLabel,
                   loadDisabled && styles.actionLabelDisabled,
                 ]}
               >
                 Load
               </Text>
             </Pressable>
-          </Animated.View>
-        );
-      }
-    : undefined;
+          </View>
+        ) : null}
 
-  const renderRightActions =
-    onEject || onDelete
-      ? (
-          _progress: Animated.AnimatedInterpolation<number>,
-          dragX: Animated.AnimatedInterpolation<number>
-        ) => {
-          const ejectTranslateX = dragX.interpolate({
-            inputRange: [-EJECT_ACTION_WIDTH, 0],
-            outputRange: [0, EJECT_ACTION_WIDTH],
-            extrapolate: "clamp",
-          });
+        {deleteOnLeft ? (
+          <View style={styles.deleteActionLeft}>
+            <Pressable
+              style={styles.deleteActionPressable}
+              onPress={runDelete}
+              accessibilityLabel="Delete"
+            >
+              <Ionicons name="trash-outline" size={22} color="#fff" />
+            </Pressable>
+          </View>
+        ) : null}
 
-          return (
-            <View style={styles.rightActionsRow}>
-              {onEject ? (
-                <Animated.View
-                  style={[styles.ejectAction, { transform: [{ translateX: ejectTranslateX }] }]}
-                >
-                  <Pressable
-                    style={styles.ejectActionPressable}
-                    onPress={runEject}
-                    disabled={ejectDisabled}
-                    accessibilityLabel="Eject and clear selection"
-                  >
-                    <MaterialCommunityIcons
-                      name="eject-outline"
-                      size={SWIPE_ICON_SIZE}
-                      color={ejectInk}
-                    />
-                    <Text
-                      style={[
-                        styles.actionLabel,
-                        { color: ejectInk },
-                        ejectDisabled && styles.actionLabelDisabled,
-                      ]}
-                    >
-                      Eject
-                    </Text>
-                  </Pressable>
-                </Animated.View>
-              ) : null}
-              {onDelete ? (
+        {rightRevealWidth > 0 ? (
+          <View style={styles.rightActionsRow}>
+            {onEject ? (
+              <View style={styles.ejectAction}>
                 <Pressable
-                  style={[styles.sideAction, styles.deleteAction]}
+                  style={styles.ejectActionPressable}
+                  onPress={runEject}
+                  disabled={ejectDisabled}
+                  accessibilityLabel="Eject and clear selection"
+                >
+                  <MaterialCommunityIcons
+                    name="eject-outline"
+                    size={SWIPE_ICON_SIZE}
+                    color={ejectInk}
+                  />
+                  <Text
+                    style={[
+                      styles.actionLabel,
+                      { color: ejectInk },
+                      ejectDisabled && styles.actionLabelDisabled,
+                    ]}
+                  >
+                    Eject
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
+            {onDelete && !deleteOnLeft ? (
+              <View style={styles.deleteAction}>
+                <Pressable
+                  style={styles.deleteActionPressable}
                   onPress={runDelete}
                   accessibilityLabel="Delete"
                 >
-                  <Ionicons name="trash-outline" size={22} color={colors.error} />
+                  <Ionicons name="trash-outline" size={22} color="#fff" />
                 </Pressable>
-              ) : null}
-            </View>
-          );
-        }
-      : undefined;
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+      </View>
 
-  const handleSwipeOpen = (direction: "left" | "right") => {
-    if (direction === "left" && onLoad && !loadDisabled) {
-      runLoad();
-      return;
-    }
-    if (direction === "right" && onEject && !ejectDisabled) {
-      runEject();
-    }
-  };
-
-  const hasAutoOpen = (onLoad && !loadDisabled) || (onEject && !ejectDisabled);
-
-  return (
-    <Swipeable
-      ref={swipeableRef}
-      renderLeftActions={renderLeftActions}
-      renderRightActions={renderRightActions}
-      overshootLeft={false}
-      overshootRight={false}
-      friction={2}
-      leftThreshold={LOAD_ACTION_WIDTH * 0.45}
-      rightThreshold={EJECT_ACTION_WIDTH * 0.45}
-      onSwipeableOpen={hasAutoOpen ? handleSwipeOpen : undefined}
-    >
-      <View style={{ backgroundColor }}>{children}</View>
-    </Swipeable>
+      <GestureDetector gesture={pan}>
+        <Animated.View style={[{ backgroundColor }, rowStyle]}>{children}</Animated.View>
+      </GestureDetector>
+    </View>
   );
 }
 
 function createStyles() {
   return StyleSheet.create({
+    root: {
+      overflow: "hidden",
+    },
+    actionsLayer: {
+      ...StyleSheet.absoluteFillObject,
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "stretch",
+    },
     rightActionsRow: {
       flexDirection: "row",
       alignItems: "stretch",
-    },
-    sideAction: {
-      justifyContent: "center",
-      alignItems: "center",
-      width: 84,
-      gap: 4,
-      paddingHorizontal: 4,
+      marginLeft: "auto",
     },
     loadAction: {
       width: LOAD_ACTION_WIDTH,
+      backgroundColor: LOAD_SWIPE_GREEN,
       justifyContent: "center",
     },
     loadActionPressable: {
@@ -211,6 +278,12 @@ function createStyles() {
       alignItems: "center",
       gap: 5,
       paddingHorizontal: 4,
+    },
+    loadActionLabel: {
+      color: LOAD_ACTION_INK,
+    },
+    actionPressableDisabled: {
+      opacity: 0.45,
     },
     actionLabel: {
       fontSize: 10,
@@ -233,7 +306,19 @@ function createStyles() {
       opacity: 0.45,
     },
     deleteAction: {
-      backgroundColor: "transparent",
+      width: DELETE_ACTION_WIDTH,
+      backgroundColor: DELETE_SWIPE_RED,
+      justifyContent: "center",
+    },
+    deleteActionLeft: {
+      width: DELETE_ACTION_WIDTH,
+      backgroundColor: DELETE_SWIPE_RED,
+      justifyContent: "center",
+    },
+    deleteActionPressable: {
+      flex: 1,
+      justifyContent: "center",
+      alignItems: "center",
     },
   });
 }

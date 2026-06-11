@@ -21,7 +21,8 @@ export interface LMAccount {
   relayUrl?: string;   // LM Studio server URL (e.g. http://192.168.1.5:1234/v1)
 }
 
-const STORE_KEY = "lmlink:account";
+const STORE_KEY = "lmlink_account";
+const LEGACY_STORE_KEY = "lmlink:account";
 
 const SECURE_STORE_OPTIONS: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
@@ -118,10 +119,15 @@ export async function signInWithConnectionString(
 }
 
 export async function signOut(): Promise<void> {
-  try {
-    await SecureStore.deleteItemAsync(STORE_KEY, SECURE_STORE_OPTIONS);
-  } catch {
-    // Key may already be absent — treat as signed out.
+  for (const key of [STORE_KEY, LEGACY_STORE_KEY]) {
+    try {
+      const existing = await SecureStore.getItemAsync(key, SECURE_STORE_OPTIONS);
+      if (existing !== null) {
+        await SecureStore.deleteItemAsync(key, SECURE_STORE_OPTIONS);
+      }
+    } catch {
+      /* treat as signed out */
+    }
   }
 }
 
@@ -150,8 +156,11 @@ export async function saveManagementApiToken(
 
 export async function loadAccount(): Promise<LMAccount | null> {
   try {
-    const raw = await SecureStore.getItemAsync(STORE_KEY, SECURE_STORE_OPTIONS);
-    if (!raw) return null;
+    let raw = await SecureStore.getItemAsync(STORE_KEY, SECURE_STORE_OPTIONS);
+    if (!raw) {
+      raw = await SecureStore.getItemAsync(LEGACY_STORE_KEY, SECURE_STORE_OPTIONS);
+      if (!raw) return null;
+    }
     const account = JSON.parse(raw) as LMAccount;
     const migrated = withRelayUrl({
       ...account,

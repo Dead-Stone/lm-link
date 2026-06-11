@@ -3,7 +3,7 @@ import {
   displayNameFromGgufFilename,
   ggufFilenameFromUrl,
 } from "./model-download-string";
-import { isModelDownloaded, LocalModelInfo } from "./local-models";
+import { isModelDownloaded, LocalModelInfo, MIN_GGUF_MODEL_BYTES } from "./local-models";
 
 const STORAGE_KEY = "lmlink:custom-local-models";
 
@@ -16,6 +16,17 @@ export type CustomLocalModelRecord = {
 
 export function customModelKey(filename: string): string {
   return `custom:${filename}`;
+}
+
+/** Build a catalog row for a pasted GGUF URL before it is saved to custom models. */
+export function buildPendingLocalModelFromGgufUrl(sourceUrl: string): LocalModelInfo {
+  const filename = ggufFilenameFromUrl(sourceUrl);
+  return toLocalModelInfo({
+    key: customModelKey(filename),
+    filename,
+    sourceUrl,
+    name: displayNameFromGgufFilename(filename),
+  });
 }
 
 export function toLocalModelInfo(record: CustomLocalModelRecord): LocalModelInfo {
@@ -31,6 +42,7 @@ export function toLocalModelInfo(record: CustomLocalModelRecord): LocalModelInfo
     badgeColor: "#888888",
     downloadUrl: record.sourceUrl,
     filename: record.filename,
+    minFileBytes: MIN_GGUF_MODEL_BYTES,
   };
 }
 

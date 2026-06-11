@@ -24,6 +24,7 @@ export interface ThemedErrorProps {
   onDismiss: () => void;
   onRetry?: () => void;
   retryLabel?: string;
+  actionIcon?: keyof typeof Ionicons.glyphMap;
   style?: StyleProp<ViewStyle>;
 }
 
@@ -37,6 +38,7 @@ export default function ThemedError({
   onDismiss,
   onRetry,
   retryLabel = "Try again",
+  actionIcon = "refresh",
   style,
 }: ThemedErrorProps) {
   const { colors } = useTheme();
@@ -71,7 +73,7 @@ export default function ThemedError({
                   style={[modalStyles.primaryBtn, { flexDirection: "row", gap: 6 }]}
                   onPress={onRetry}
                 >
-                  <Ionicons name="refresh" size={16} color="#fff" />
+                  <Ionicons name={actionIcon} size={16} color="#fff" />
                   <Text style={modalStyles.primaryBtnText}>{retryLabel}</Text>
                 </Pressable>
               ) : null}
@@ -93,7 +95,7 @@ export default function ThemedError({
         {hint ? <Text style={styles.panelHint}>{hint}</Text> : null}
         {onRetry ? (
           <Pressable style={styles.retryBtn} onPress={onRetry}>
-            <Ionicons name="refresh" size={15} color="#fff" />
+            <Ionicons name={actionIcon} size={15} color="#fff" />
             <Text style={styles.retryBtnText}>{retryLabel}</Text>
           </Pressable>
         ) : null}

@@ -15,10 +15,14 @@ type Props = {
   onChangeText: (text: string) => void;
   onDownload: () => void;
   placeholder: string;
-  hint: string;
+  hint?: string;
   colors: ThemeColors;
   disabled?: boolean;
   downloading?: boolean;
+  /** Inline row for library search — no title/hint wrapper. */
+  variant?: "default" | "compact";
+  /** Compact inside a pill search bar — borderless input like search field. */
+  embedded?: boolean;
 };
 
 export default function ModelDownloadStringField({
@@ -30,44 +34,58 @@ export default function ModelDownloadStringField({
   colors,
   disabled = false,
   downloading = false,
+  variant = "default",
+  embedded = false,
 }: Props) {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const canDownload = value.trim().length > 0 && !disabled && !downloading;
 
+  const row = (
+    <View style={[styles.row, variant === "compact" && styles.rowCompact]}>
+      {variant === "compact" && !embedded ? (
+        <Ionicons name="link" size={16} color={colors.textDim} />
+      ) : null}
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor={colors.placeholder}
+        style={[styles.input, variant === "compact" && embedded && styles.inputEmbedded]}
+        autoCorrect={false}
+        autoCapitalize="none"
+        editable={!downloading && !disabled}
+        returnKeyType="go"
+        onSubmitEditing={() => canDownload && onDownload()}
+      />
+      <Pressable
+        onPress={onDownload}
+        disabled={!canDownload}
+        style={({ pressed }) => [
+          styles.btn,
+          embedded && styles.btnEmbedded,
+          !canDownload && styles.btnDisabled,
+          pressed && canDownload && styles.btnPressed,
+        ]}
+        accessibilityLabel="Download model"
+      >
+        {downloading ? (
+          <ActivityIndicator size="small" color={colors.primaryLight} />
+        ) : (
+          <Ionicons name="cloud-download-outline" size={20} color={colors.primaryLight} />
+        )}
+      </Pressable>
+    </View>
+  );
+
+  if (variant === "compact") {
+    return row;
+  }
+
   return (
     <View style={styles.wrap}>
       <Text style={styles.title}>Download from link</Text>
-      <SectionHint text={hint} colors={colors} />
-      <View style={styles.row}>
-        <TextInput
-          value={value}
-          onChangeText={onChangeText}
-          placeholder={placeholder}
-          placeholderTextColor={colors.placeholder}
-          style={styles.input}
-          autoCorrect={false}
-          autoCapitalize="none"
-          editable={!downloading && !disabled}
-          returnKeyType="go"
-          onSubmitEditing={() => canDownload && onDownload()}
-        />
-        <Pressable
-          onPress={onDownload}
-          disabled={!canDownload}
-          style={({ pressed }) => [
-            styles.btn,
-            !canDownload && styles.btnDisabled,
-            pressed && canDownload && styles.btnPressed,
-          ]}
-          accessibilityLabel="Download model"
-        >
-          {downloading ? (
-            <ActivityIndicator size="small" color={colors.primaryLight} />
-          ) : (
-            <Ionicons name="cloud-download-outline" size={20} color={colors.primaryLight} />
-          )}
-        </Pressable>
-      </View>
+      {hint ? <SectionHint text={hint} colors={colors} /> : null}
+      {row}
     </View>
   );
 }
@@ -95,6 +113,19 @@ function createStyles(colors: ThemeColors) {
       gap: 8,
       marginTop: 2,
     },
+    rowCompact: {
+      flex: 1,
+      marginTop: 0,
+      gap: 6,
+    },
+    inputEmbedded: {
+      paddingHorizontal: 0,
+      paddingVertical: 0,
+      backgroundColor: "transparent",
+      borderWidth: 0,
+      fontSize: 14,
+      lineHeight: 18,
+    },
     input: {
       flex: 1,
       minWidth: 0,
@@ -117,6 +148,10 @@ function createStyles(colors: ThemeColors) {
       borderWidth: 1,
       borderColor: colors.primaryBorder,
       flexShrink: 0,
+    },
+    btnEmbedded: {
+      width: 32,
+      height: 32,
     },
     btnDisabled: { opacity: 0.45 },
     btnPressed: { opacity: 0.82 },

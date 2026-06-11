@@ -14,10 +14,20 @@ export default function DismissAffordance({ kind, colors, onPress }: Props) {
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   if (kind === "down") {
+    const handle = <View style={styles.downBar} />;
+    if (!onPress) {
+      return <View style={styles.downSlot}>{handle}</View>;
+    }
     return (
-      <View style={styles.downSlot}>
-        <View style={styles.downBar} />
-      </View>
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [styles.downSlot, pressed && styles.arrowSlotPressed]}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel="Close"
+      >
+        {handle}
+      </Pressable>
     );
   }
 

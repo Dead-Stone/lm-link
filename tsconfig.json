@@ -8,5 +8,5 @@
     }
   },
   "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.d.ts"],
-  "exclude": ["dist", "dist2", "dist4", "dist5", "node_modules"]
+  "exclude": ["dist", "node_modules"]
 }

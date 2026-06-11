@@ -10,6 +10,16 @@ export type HuggingFaceAuthOptions = {
   hfToken?: string;
 };
 
+export class HuggingFaceApiError extends Error {
+  readonly status?: number;
+
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = "HuggingFaceApiError";
+    this.status = status;
+  }
+}
+
 function trimEnv(value: string | undefined): string {
   return value?.trim() ?? "";
 }
@@ -18,15 +28,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Settings token first; dev `.env` token only in `__DEV__` when no proxy is configured. */
+/** Settings token first, then `EXPO_PUBLIC_HF_TOKEN` when no proxy is configured. */
 export function resolveHuggingFaceToken(options?: HuggingFaceAuthOptions): string {
   const user = sanitizeApiToken(options?.hfToken ?? "");
   if (user) return user;
   if (trimEnv(process.env.EXPO_PUBLIC_HF_PROXY_URL)) return "";
-  if (__DEV__) {
-    return trimEnv(process.env.EXPO_PUBLIC_HF_TOKEN);
-  }
-  return "";
+  return trimEnv(process.env.EXPO_PUBLIC_HF_TOKEN);
 }
 
 export function resolveHuggingFaceApiBase(): string {
@@ -34,7 +41,9 @@ export function resolveHuggingFaceApiBase(): string {
   return proxy || HF_API;
 }
 
-export function huggingFaceAuthHeaders(options?: HuggingFaceAuthOptions): HeadersInit {
+export function huggingFaceAuthHeaders(
+  options?: HuggingFaceAuthOptions
+): Record<string, string> {
   const token = resolveHuggingFaceToken(options);
   if (!token) return {};
   return { Authorization: `Bearer ${token}` };

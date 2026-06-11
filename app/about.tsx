@@ -34,7 +34,9 @@ import {
   FOOTER_LEGAL_SUFFIX,
 } from "../lib/creator";
 import { createScreenHeaderTitleStyle } from "../lib/typography";
+import { screenHeaderTopPadding } from "../lib/safe-area-layout";
 import { getSettingsPalette, radii, ThemeColors, useTheme } from "../lib/theme";
+import AboutPhoneSection from "../components/AboutPhoneSection";
 
 const SETTINGS_SUBTEXT = {
   fontSize: 12,
@@ -175,7 +177,7 @@ export default function AboutScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
+      <View style={[styles.topBar, { paddingTop: screenHeaderTopPadding(insets.top) }]}>
         <Pressable onPress={() => router.back()} style={styles.topBarBtn} hitSlop={8}>
           <Ionicons name="chevron-back" size={24} color={colors.textMuted} />
         </Pressable>
@@ -187,6 +189,8 @@ export default function AboutScreen() {
         contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 24 }]}
         showsVerticalScrollIndicator={false}
       >
+        <AboutPhoneSection colors={colors} />
+
         <Section title="About">
           <View style={styles.introBlock}>
             <Text style={styles.appName}>{APP_DISPLAY_NAME}</Text>

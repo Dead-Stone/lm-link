@@ -1,0 +1,278 @@
+---
+layout: null
+permalink: /install.html
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Install LM Link for Android — chat with LM Studio on your phone over Wi‑Fi or run models on-device." />
+  <title>Install — LM Link for Android</title>
+  <style>
+    :root {
+      --bg: #0f0f12;
+      --surface: #1a1a22;
+      --text: #f4f4f5;
+      --muted: #a1a1aa;
+      --brand: #5b4fcf;
+      --brand-light: #7c6cf0;
+      --border: rgba(255, 255, 255, 0.1);
+      --radius: 14px;
+      --max: 640px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .wrap {
+      max-width: var(--max);
+      margin: 0 auto;
+      padding: 32px 20px 48px;
+    }
+
+    .hero {
+      text-align: center;
+      margin-bottom: 36px;
+    }
+
+    .icon {
+      width: 88px;
+      height: 88px;
+      border-radius: 22px;
+      margin: 0 auto 16px;
+      display: block;
+      box-shadow: 0 12px 40px rgba(91, 79, 207, 0.35);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .tagline {
+      margin: 0;
+      color: var(--muted);
+      font-size: 1rem;
+    }
+
+    section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 18px;
+      margin-bottom: 16px;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    p { margin: 0 0 12px; }
+    p:last-child { margin-bottom: 0; }
+
+    .actions {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 4px;
+    }
+
+    .btn {
+      display: block;
+      text-align: center;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 1rem;
+      padding: 14px 18px;
+      border-radius: 12px;
+      border: 1px solid transparent;
+      transition: opacity 0.15s ease;
+    }
+
+    .btn:hover { opacity: 0.9; }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--brand-light), var(--brand));
+      color: #fff;
+    }
+
+    .btn-secondary {
+      background: transparent;
+      color: var(--text);
+      border-color: var(--border);
+    }
+
+    .btn-muted {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--muted);
+      cursor: default;
+    }
+
+    .note {
+      font-size: 0.875rem;
+      color: var(--muted);
+      margin-top: 10px;
+    }
+
+    ol, ul {
+      margin: 0;
+      padding-left: 1.2rem;
+    }
+
+    li { margin-bottom: 8px; }
+    li:last-child { margin-bottom: 0; }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.88em;
+      background: rgba(255, 255, 255, 0.08);
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+
+    footer {
+      margin-top: 28px;
+      text-align: center;
+      font-size: 0.8rem;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    footer a {
+      color: var(--brand-light);
+      text-decoration: none;
+    }
+
+    footer a:hover { text-decoration: underline; }
+
+    .disclaimer {
+      margin-top: 16px;
+      font-size: 0.75rem;
+      opacity: 0.85;
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header class="hero">
+      <img
+        class="icon"
+        src="https://raw.githubusercontent.com/Dead-Stone/lm-link/master/assets/icon.png"
+        width="88"
+        height="88"
+        alt="LM Link app icon"
+      />
+      <h1>LM Link for Android</h1>
+      <p class="tagline">Chat with LM Studio on your Mac or PC over Wi‑Fi — or run GGUF models on your phone.</p>
+    </header>
+
+    <section aria-labelledby="install-heading">
+      <h2 id="install-heading">Install</h2>
+      <div class="actions">
+        <a
+          class="btn btn-primary"
+          id="play-store-link"
+          href="https://play.google.com/store/apps/details?id=com.lmlink.android"
+          rel="noopener noreferrer"
+        >
+          Get it on Google Play
+        </a>
+        <a
+          class="btn btn-secondary"
+          href="https://github.com/Dead-Stone/lm-link/releases/latest"
+          rel="noopener noreferrer"
+        >
+          Download APK (GitHub Releases)
+        </a>
+      </div>
+      <p class="note" id="play-store-note">
+        Google Play listing is rolling out. If the store link is not live yet, use the APK or
+        <a href="mailto:mohanmoganti2023@gmail.com?subject=LM%20Link%20Android%20beta%20tester">email us</a>
+        to join the closed test.
+      </p>
+    </section>
+
+    <section aria-labelledby="apk-heading">
+      <h2 id="apk-heading">Install the APK</h2>
+      <ol>
+        <li>Download the latest <strong>preview APK</strong> from GitHub Releases.</li>
+        <li>On your phone, open the file and tap <strong>Install</strong>.</li>
+        <li>If Android asks, allow installs from your browser or file manager (<em>Install unknown apps</em>).</li>
+        <li>Open <strong>LM Link</strong> from your home screen.</li>
+      </ol>
+      <p class="note">Package ID: <code>com.lmlink.android</code></p>
+    </section>
+
+    <section aria-labelledby="needs-heading">
+      <h2 id="needs-heading">What you need</h2>
+      <ul>
+        <li>Android phone or tablet (recent version recommended)</li>
+        <li>Same Wi‑Fi as your Mac or PC for <strong>remote</strong> chat</li>
+        <li><a href="https://lmstudio.ai" style="color: var(--brand-light);">LM Studio</a> 0.4+ on your computer (for remote mode)</li>
+        <li>Optional: storage space for on-device GGUF models</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="start-heading">
+      <h2 id="start-heading">After installing</h2>
+      <ol>
+        <li>On your computer: load a model in LM Studio → <strong>Developer</strong> → enable <strong>Serve on Local Network</strong> and <strong>CORS</strong> → <strong>Start Server</strong>.</li>
+        <li>In LM Link: <strong>Settings → Connection</strong> → scan the network or paste your server URL (e.g. <code>http://192.168.1.5:1234/v1</code>) → <strong>Test</strong> → <strong>Save</strong>.</li>
+        <li>Open a chat and pick a model from the bar at the bottom.</li>
+      </ol>
+      <p class="note">The in-app tutorial walks through each step with illustrations.</p>
+    </section>
+
+    <section aria-labelledby="build-heading">
+      <h2 id="build-heading">Build from source</h2>
+      <p>Developers can clone the repo and run <code>npm install</code> then <code>npm run android</code> or <code>npm run build:apk:local</code>.</p>
+      <p><a href="https://github.com/Dead-Stone/lm-link" style="color: var(--brand-light);">github.com/Dead-Stone/lm-link</a></p>
+    </section>
+
+    <footer>
+      <p>
+        <a href="./">Privacy policy</a>
+        ·
+        <a href="./THIRD_PARTY_NOTICES.html">Open source licenses</a>
+        ·
+        <a href="https://github.com/Dead-Stone/lm-link">Source code</a>
+      </p>
+      <p class="disclaimer">
+        LM Link is an independent open-source project. Not affiliated with, endorsed by, or sponsored by LM Studio or Element Labs Inc.
+      </p>
+    </footer>
+  </main>
+
+  <script>
+    (function () {
+      var play = document.getElementById("play-store-link");
+      var note = document.getElementById("play-store-note");
+      if (!play || !note) return;
+
+      var params = new URLSearchParams(window.location.search);
+      if (params.get("play") === "soon") {
+        play.className = "btn btn-muted";
+        play.removeAttribute("href");
+        play.textContent = "Google Play — coming soon";
+        play.setAttribute("aria-disabled", "true");
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -77,8 +77,9 @@ Task
 *.orig.*
 
 # Generated icon outputs (regenerate: npm run compose-brand-icons)
-# Source assets to keep tracked: lm-studio-logo.png, android-badge.png, icon.png, adaptive-icon.png, splash-icon.png, favicon.png
-assets/play-store-icon.png
+# Source assets to keep tracked: lm-studio-logo.png, lm-studio-android-final.png, icon.png, adaptive-icon.png, splash-icon.png, favicon.png
+assets/play-listing-icon.png
+assets/play-feature-graphic.png
 assets/lm-link-icon.png
 assets/brand-logo.png
 assets/android-robot-head-badge.png

@@ -1,4 +1,6 @@
+import { isGatedHfCatalogId, catalogIdToCommunityGgufDownloadUrl } from "./catalog-hf-repo";
 import { normalizeModelKey } from "./model-id";
+import { resolveRemoteDownloadModelString } from "./model-download-string";
 import { extractModelParamLabel, parseModelName } from "./model-name";
 import { estimateDownloadSizeFromParams, resolveFileSizeLabel } from "./model-size";
 
@@ -9,7 +11,7 @@ import {
   remoteLibraryEntryHaystack,
 } from "./vision-models";
 
-export const QUICK_ACCESS_LIMIT = 10;
+export const QUICK_ACCESS_LIMIT = 5;
 
 export type LibraryDownloadSource = "lmstudio" | "huggingface";
 
@@ -26,6 +28,8 @@ export interface RemoteLibraryEntry {
   /** Popularity metric — LM Studio hub when available, else Hugging Face. */
   downloads?: number;
   downloadSource?: LibraryDownloadSource;
+  /** Override for POST /api/v1/models/download when the catalog id is missing or gated. */
+  downloadModel?: string;
 }
 
 /**
@@ -84,6 +88,17 @@ export const REMOTE_MODEL_LIBRARY: RemoteLibraryEntry[] = [
     description: "Strong 4B general-purpose model — LM Studio staff pick.",
   },
   {
+    id: "meta-llama/llama-3.2-1b-instruct",
+    name: "Llama 3.2 1B Instruct",
+    publisher: "Meta",
+    params: "1B",
+    sizeLabel: "~670 MB",
+    badge: "Efficient",
+    badgeColor: "#0866ff",
+    description: "Meta's efficient small Llama — great daily driver on Mac.",
+    downloadSource: "huggingface",
+  },
+  {
     id: "meta-llama/llama-3.2-3b-instruct",
     name: "Llama 3.2 3B Instruct",
     publisher: "Meta",
@@ -92,6 +107,7 @@ export const REMOTE_MODEL_LIBRARY: RemoteLibraryEntry[] = [
     badge: "Balanced",
     badgeColor: "#0866ff",
     description: "Strong small Llama model — a solid daily driver on Mac.",
+    downloadSource: "huggingface",
   },
   {
     id: "mistralai/mistral-7b-instruct-v0.3",
@@ -212,6 +228,28 @@ export function findCuratedRemoteLibraryEntry(
   return REMOTE_MODEL_LIBRARY.find((item) => normalizeModelKey(item.id) === key);
 }
 
+/** LM Studio download source — gated Meta Llama uses community GGUF quants for download. */
+export function resolveRemoteEntryDownloadSource(
+  entry: Pick<RemoteLibraryEntry, "id" | "downloadSource">
+): LibraryDownloadSource {
+  if (entry.downloadSource) return entry.downloadSource;
+  if (isGatedHfCatalogId(entry.id)) return "huggingface";
+  return "lmstudio";
+}
+
+/** String sent to LM Studio `POST /api/v1/models/download`. */
+export function resolveRemoteEntryDownloadModel(
+  entry: Pick<RemoteLibraryEntry, "id" | "downloadModel" | "downloadSource">
+): string {
+  if (entry.downloadModel?.trim()) {
+    return entry.downloadModel.trim();
+  }
+  const communityGguf = catalogIdToCommunityGgufDownloadUrl(entry.id);
+  if (communityGguf) return communityGguf;
+  const downloadSource = resolveRemoteEntryDownloadSource(entry);
+  return resolveRemoteDownloadModelString(entry.id, { downloadSource });
+}
+
 function publisherBadgeColor(publisher: string): string {
   const key = publisher.toLowerCase();
   if (key.includes("google")) return "#4285f4";
@@ -226,7 +264,7 @@ function publisherBadgeColor(publisher: string): string {
   return "#8b5cf6";
 }
 
-function remoteQuickEntryFromId(id: string): RemoteLibraryEntry {
+export function resolveRemoteCatalogEntry(id: string): RemoteLibraryEntry {
   const curated = findCuratedRemoteLibraryEntry(id);
   if (curated) return curated;
 
@@ -269,7 +307,7 @@ export function resolveRemoteLibrarySizeLabel(
 ): string | null {
   const curated = findCuratedRemoteLibraryEntry(entry.id);
   const resolved = resolveFileSizeLabel(
-    entry.sizeLabel,
+    entry.sizeLabel && entry.sizeLabel !== "—" ? entry.sizeLabel : undefined,
     curated?.sizeLabel,
     entry.id,
     entry.name,
@@ -281,6 +319,7 @@ export function resolveRemoteLibrarySizeLabel(
     entry.params ??
     curated?.params ??
     extractModelParamLabel(entry.id, entry.name, entry.params) ??
+    parseModelName(entry.id).sizeTag ??
     null;
   if (!param) return null;
 
@@ -331,7 +370,7 @@ export function getQuickAccessRemoteLibrary(
     if (seen.has(key)) continue;
     seen.add(key);
 
-    const entry = remoteQuickEntryFromId(id);
+    const entry = resolveRemoteCatalogEntry(id);
     if (isModelInstalled(installedIds, entry.id)) continue;
     if (!quickAccessEntryMatches(entry, capability)) continue;
     entries.push(entry);

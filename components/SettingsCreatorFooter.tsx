@@ -11,7 +11,6 @@ import {
 } from "react-native";
 import { APP_DISPLAY_NAME } from "../lib/app-name";
 import { CREATOR_FULL_NAME, CREATOR_SITE_URL, FOOTER_LEGAL_SUFFIX } from "../lib/creator";
-import { LINK_BADGE_SIZE_RATIO } from "../lib/link-badge-art";
 import { AppFonts } from "../lib/typography";
 import { ThemeColors, useAccentPalette } from "../lib/theme";
 import BrandLogo from "./BrandLogo";
@@ -36,8 +35,6 @@ const ICON_HIT_MIN = 44;
 const TITLE_SIDE_PADDING = 12;
 /** Matches `MmsSign` `smileWidth` in this footer. */
 const SIGN_WIDTH = 44;
-/** Slightly smaller Android badge than launcher */
-const FOOTER_LINK_RATIO = LINK_BADGE_SIZE_RATIO * 0.88;
 
 function iconFootprint(box: number): { width: number; height: number } {
   return { width: box, height: box };
@@ -193,12 +190,7 @@ export default function SettingsCreatorFooter() {
               style={[styles.iconMark, { opacity: iconGlow, transform: [{ scale: iconScale }] }]}
               pointerEvents="none"
             >
-              <BrandLogo
-                size={ICON_SIZE}
-                rounded
-                flat
-                linkSizeRatio={FOOTER_LINK_RATIO}
-              />
+              <BrandLogo size={ICON_SIZE} rounded flat />
             </Animated.View>
           </Pressable>
         </View>

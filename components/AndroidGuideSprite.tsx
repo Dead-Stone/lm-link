@@ -55,14 +55,14 @@ export default function AndroidGuideSprite({
         Animated.spring(riseAnim, {
           toValue: 0,
           useNativeDriver: true,
-          tension: 58,
+          tension: 42,
           friction: 10,
-          velocity: 1.5,
+          velocity: 0.4,
         }),
         Animated.timing(fadeAnim, {
           toValue: 1,
-          duration: 360,
-          delay: 120,
+          duration: 320,
+          delay: 80,
           easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         }),
@@ -74,7 +74,7 @@ export default function AndroidGuideSprite({
     fadeAnim.setValue(0);
     Animated.timing(fadeAnim, {
       toValue: 1,
-      duration: 240,
+      duration: 280,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start();

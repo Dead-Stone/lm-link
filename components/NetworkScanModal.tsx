@@ -10,6 +10,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { modalPageTopPadding } from "../lib/safe-area-layout";
 import { FoundServer, scanLocalNetwork } from "../lib/api";
 import { formatServerHost } from "../lib/scan-device-names";
 import { createModalTheme } from "../lib/modal-theme";
@@ -129,12 +130,12 @@ export default function NetworkScanModal({ visible, onClose, onSelect }: Props) 
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={modalStyles.pageContainer}>
+      <View style={[modalStyles.pageContainer, { paddingTop: modalPageTopPadding(insets.top) }]}>
         <View style={modalStyles.pageHandleWrap}>
           <View style={modalStyles.pageHandle} />
         </View>
 
-        <View style={[modalStyles.pageHeader, { paddingTop: 8 }]}>
+        <View style={modalStyles.pageHeader}>
           <Pressable onPress={onClose} style={modalStyles.pageHeaderBtn} hitSlop={8}>
             <View style={modalStyles.closeCircle}>
               <Ionicons name="close" size={18} color={colors.textMuted} />

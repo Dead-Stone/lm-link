@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useMemo } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View, type ViewStyle } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import SectionHintLines, { createSectionSubtitleStyle } from "./SectionHintLines";
 import { ThemeColors } from "../lib/theme";
@@ -46,6 +46,28 @@ type LibraryModelSectionProps = {
   style?: object;
 };
 
+/** Platform subtitle under Loaded / Installed — no action hints. */
+export function LibraryPlatformSubtitle({
+  label,
+  colors,
+  children,
+  style,
+}: {
+  label: string;
+  colors: ThemeColors;
+  children: React.ReactNode;
+  style?: ViewStyle;
+}) {
+  const subtitleStyle = useMemo(() => createSectionSubtitleStyle(colors), [colors]);
+
+  return (
+    <View style={style}>
+      <Text style={[subtitleStyle, { marginTop: 4, marginBottom: 2 }]}>{label}</Text>
+      {children}
+    </View>
+  );
+}
+
 export function LibraryModelSection({
   title,
   hint,
@@ -88,6 +110,8 @@ export function LibraryFlowSection({
   expanded = true,
   onToggle,
   hideTitle = false,
+  titleStyle,
+  contentStyle,
 }: {
   title: string;
   subtitle?: string;
@@ -101,15 +125,23 @@ export function LibraryFlowSection({
   onToggle?: () => void;
   /** Hide section heading (browse list uses search + filters only). */
   hideTitle?: boolean;
+  titleStyle?: object;
+  contentStyle?: object;
 }) {
   const styles = useMemo(() => createFlowSectionStyles(colors), [colors]);
   const showHeader = collapsible || !hideTitle;
+  const sectionStyle = [
+    styles.section,
+    first ? styles.sectionFirst : styles.sectionFollowing,
+    hideTitle && !collapsible && styles.sectionNoTitle,
+    style,
+  ];
 
   const headerContent = (
     <>
       {!hideTitle ? (
         <View style={styles.headerText}>
-          <Text style={styles.title}>{title}</Text>
+          <Text style={[styles.title, titleStyle]}>{title}</Text>
           {subtitle && (!collapsible || expanded) ? (
             <Text style={styles.subtitle}>{subtitle}</Text>
           ) : null}
@@ -128,10 +160,7 @@ export function LibraryFlowSection({
   );
 
   return (
-    <Animated.View
-      layout={LAYOUT_TRANSITION}
-      style={[styles.section, first && styles.sectionFirst, style]}
-    >
+    <Animated.View layout={LAYOUT_TRANSITION} style={sectionStyle}>
       {showHeader ? (
         collapsible && onToggle ? (
           <Pressable
@@ -141,17 +170,22 @@ export function LibraryFlowSection({
             style={({ pressed }) => [
               styles.header,
               styles.headerCollapsible,
+              !expanded && styles.headerCollapsed,
               pressed && styles.headerPressed,
             ]}
           >
             {headerContent}
           </Pressable>
         ) : (
-          <View style={styles.header}>{headerContent}</View>
+          <View style={[styles.header, !expanded && collapsible && styles.headerCollapsed]}>
+            {headerContent}
+          </View>
         )
       ) : null}
       {!collapsible || expanded ? (
-        <Animated.View layout={LAYOUT_TRANSITION}>{children}</Animated.View>
+        <Animated.View layout={LAYOUT_TRANSITION} style={[styles.sectionBody, contentStyle]}>
+          {children}
+        </Animated.View>
       ) : null}
     </Animated.View>
   );
@@ -198,21 +232,37 @@ export function CollapsibleLibrarySection({
 function createFlowSectionStyles(colors: ThemeColors) {
   return StyleSheet.create({
     section: {
-      marginBottom: 8,
-      marginTop: 20,
+      paddingBottom: 14,
+      marginBottom: 14,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
     },
     sectionFirst: {
-      marginTop: 8,
+      marginTop: 6,
+    },
+    sectionFollowing: {
+      marginTop: 0,
+    },
+    sectionNoTitle: {
+      marginTop: 0,
+    },
+    sectionBody: {
+      marginTop: 2,
     },
     header: {
-      marginBottom: 8,
-      paddingHorizontal: 2,
+      marginBottom: 4,
+      paddingHorizontal: 0,
     },
     headerCollapsible: {
       flexDirection: "row",
-      alignItems: "flex-start",
+      alignItems: "center",
       justifyContent: "space-between",
-      gap: 10,
+      gap: 8,
+      marginBottom: 0,
+      paddingVertical: 4,
+      minHeight: 32,
+    },
+    headerCollapsed: {
       marginBottom: 0,
     },
     headerPressed: {

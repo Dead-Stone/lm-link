@@ -8,7 +8,7 @@ title: Privacy Policy — LM Link for Android
 **App:** LM Link for Android (`com.lmlink.android`)  
 **Contact:** [mohanmoganti2023@gmail.com](mailto:mohanmoganti2023@gmail.com)
 
-[Third-party notices](THIRD_PARTY_NOTICES.html)
+[Install LM Link](install.html) · [Third-party notices](THIRD_PARTY_NOTICES.html)
 
 ## Summary
 

@@ -5,6 +5,7 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { createModalTheme } from "../lib/modal-theme";
+import { modalPageTopPadding } from "../lib/safe-area-layout";
 import { ThemeColors, useTheme } from "../lib/theme";
 import { AppFonts } from "../lib/typography";
 import SetupGuideBody from "./SetupGuideBody";
@@ -40,7 +41,7 @@ export default function SetupGuideModal({
     >
       <GestureHandlerRootView style={[modalStyles.pageContainer, { flex: 1 }]}>
         <SwipeDismissSheet direction="down" onDismiss={onClose} style={modalStyles.pageContainer}>
-          <View style={[modalStyles.pageContainer, { paddingTop: insets.top }]}>
+          <View style={[modalStyles.pageContainer, { paddingTop: modalPageTopPadding(insets.top) }]}>
             <View style={modalStyles.pageHandleWrap}>
               <View style={modalStyles.pageHandle} />
             </View>

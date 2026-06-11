@@ -334,7 +334,7 @@ function createFilterStyles(colors: ThemeColors) {
       backgroundColor: colors.primaryLight,
     },
     activeChipsScroll: {
-      marginBottom: 8,
+      marginBottom: 4,
       marginHorizontal: -2,
     },
     activeChipsRow: {

@@ -70,6 +70,8 @@ export interface Settings {
   apiKey?: string;              // in-memory only; persisted in SecureStore
   hfToken?: string;             // in-memory only; persisted in SecureStore
   localServerUrl?: string;      // Mac LAN URL for model download/load (when using Hub for chat)
+  /** User-chosen label for the Wi‑Fi PC connection (Settings → Connection → Name). */
+  serverConnectionName?: string;
   /** Unload other models on Mac before loading a new one (default: true). */
   singleModelMode?: boolean;
   activeProfileId?: string;     // which ConnectionProfile is active

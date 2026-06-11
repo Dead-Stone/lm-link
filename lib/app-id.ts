@@ -2,6 +2,7 @@
 export const ANDROID_PACKAGE = "com.lmlink.android";
 
 export {
+  INSTALL_PAGE_URL,
   PRIVACY_POLICY_URL,
   SOURCE_CODE_URL,
   THIRD_PARTY_NOTICES_URL,

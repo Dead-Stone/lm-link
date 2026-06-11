@@ -11,6 +11,16 @@ import {
   modelSupportsSystemRole,
 } from "./chat-request";
 import { isSameModelId, resolveCanonicalModelId } from "./model-id";
+import { modelStringNeedsHfAuth } from "./catalog-hf-repo";
+import {
+  classifyHfDownloadError,
+  downloadUsesHuggingFaceAuth,
+  formatHfDownloadFailureMessage,
+  resolveHfRepoIdForDownload,
+  type DownloadErrorContext,
+  type HfDownloadIssue,
+} from "./huggingface-gated";
+import { resolveHuggingFaceToken } from "./huggingface-api";
 import { resolveRemoteDownloadModelString } from "./model-download-string";
 import { LibraryDownloadSource } from "./remote-model-library";
 import {
@@ -22,10 +32,6 @@ import {
 import { runSimulatedProgress } from "./simulated-progress";
 import { LMModel, Message, ModelDownloadJob, ModelLoadResult, Settings } from "./types";
 import { modelSupportsVision } from "./vision-models";
-
-function modelBaseHost(baseUrl: string): string {
-  return managementApiBase(baseUrl);
-}
 
 /** Server root for native `/api/v1/*` calls — strips OpenAI `/v1` or native `/api/v1` suffixes. */
 export function managementApiBase(baseUrl: string): string {
@@ -218,41 +224,117 @@ function isDownloadEndpointMissing(message: string): boolean {
   return false;
 }
 
-export function formatDownloadError(error: unknown, settings: Pick<Settings, "baseUrl" | "localServerUrl">): string {
+export type ParsedDownloadError = {
+  message: string;
+  hfIssue: HfDownloadIssue | null;
+};
+
+export function parseDownloadError(
+  error: unknown,
+  settings: Pick<Settings, "baseUrl" | "localServerUrl">,
+  context?: DownloadErrorContext
+): ParsedDownloadError {
   const message = error instanceof Error ? error.message : String(error);
   const lower = message.toLowerCase();
+  const usesHf = context ? downloadUsesHuggingFaceAuth(context) : false;
+  const repoId = context ? resolveHfRepoIdForDownload(context) : null;
+  const hasToken = context?.hfToken
+    ? !!resolveHuggingFaceToken({ hfToken: context.hfToken })
+    : false;
 
   if (!resolveManagementBaseUrl(settings)) {
-    return (
-      "Model downloads need a direct connection to your Mac — Hub relay can't download for you. " +
-      "In Settings → Connection → Local, add your Mac's server URL (e.g. http://192.168.1.5:1234/v1) on the same Wi‑Fi."
-    );
+    return {
+      message:
+        "Model downloads need a direct connection to your Mac — Hub relay can't download for you. " +
+        "In Settings → Connection → Local, add your Mac's server URL (e.g. http://192.168.1.5:1234/v1) on the same Wi‑Fi.",
+      hfIssue: null,
+    };
   }
-  if (lower.includes("401") || lower.includes("403") || lower.includes("unauthorized")) {
-    return "LM Studio rejected the request — add your API token under Settings → Connection → Local → Advanced.";
+
+  if (usesHf) {
+    const hfIssue = classifyHfDownloadError(message, { repoId, hasToken });
+    if (hfIssue) return { message: hfIssue.message, hfIssue };
+    if (lower.includes("401") || lower.includes("403") || lower.includes("unauthorized")) {
+      const fallback: HfDownloadIssue = hasToken
+        ? {
+            kind: "acceptance_required",
+            repoId: repoId ?? "this model",
+            message:
+              "Hugging Face blocked this download. Accept the model agreement on Hugging Face, then retry.",
+          }
+        : {
+            kind: "token_missing",
+            repoId: repoId ?? "this model",
+            message:
+              "Add your Hugging Face token under Settings → Connection → Advanced keys, then retry.",
+          };
+      return { message: fallback.message, hfIssue: fallback };
+    }
+  } else if (lower.includes("401") || lower.includes("403") || lower.includes("unauthorized")) {
+    return {
+      message:
+        "LM Studio rejected the request — add your API token under Settings → Connection → Local → Advanced.",
+      hfIssue: null,
+    };
   }
+
   if (isDownloadEndpointMissing(message)) {
-    return (
-      "Download API not found on your Mac — use a server URL like http://192.168.1.5:1234/v1 (not /api/v1), " +
-      "confirm LM Studio 0.4+ is running, and restart the Developer server."
-    );
+    return {
+      message:
+        "Download API not found on your Mac — use a server URL like http://192.168.1.5:1234/v1 (not /api/v1), " +
+        "confirm LM Studio 0.4+ is running, and restart the Developer server.",
+      hfIssue: null,
+    };
   }
   if (lower.includes("network request failed") || lower.includes("failed to connect")) {
-    return "Can't reach your Mac — confirm LM Studio's server is running, Serve on Local Network is on, and you're on the same Wi‑Fi.";
+    return {
+      message:
+        "Can't reach your Mac — confirm LM Studio's server is running, Serve on Local Network is on, and you're on the same Wi‑Fi.",
+      hfIssue: null,
+    };
+  }
+  if (
+    lower.includes("no longer be found") ||
+    lower.includes("use_policy") ||
+    lower.includes("hf-proxy")
+  ) {
+    return {
+      message:
+        "Meta's license file (USE_POLICY.md) wasn't found on Hugging Face. Retry the download — LM Link routes Llama models through a community GGUF quant.",
+      hfIssue: null,
+    };
   }
   if (
     lower.includes("model not found") ||
     lower.includes("model_not_found") ||
     (lower.includes("not found") && lower.includes("model") && !isDownloadEndpointMissing(message))
   ) {
-    return (
-      "LM Studio couldn't find that model. Paste a catalog ID (qwen/qwen3-4b-2507), " +
-      "an org/model Hugging Face repo, or a full https://huggingface.co/… link."
-    );
+    return {
+      message:
+        "LM Studio couldn't find that model. Paste a catalog ID (qwen/qwen3-4b-2507), " +
+        "an org/model Hugging Face repo, or a full https://huggingface.co/… link.",
+      hfIssue: null,
+    };
   }
   const runtimeMessage = formatLmStudioRuntimeDownloadError(message, undefined);
-  if (runtimeMessage) return runtimeMessage;
-  return message;
+  if (runtimeMessage) return { message: runtimeMessage, hfIssue: null };
+  if (usesHf || context?.downloadSource === "huggingface") {
+    const hfMessage = formatHfDownloadFailureMessage(
+      message,
+      context?.resolvedModel ?? context?.modelId ?? repoId ?? message,
+      context?.hfToken
+    );
+    if (hfMessage) return { message: hfMessage, hfIssue: null };
+  }
+  return { message, hfIssue: null };
+}
+
+export function formatDownloadError(
+  error: unknown,
+  settings: Pick<Settings, "baseUrl" | "localServerUrl">,
+  context?: DownloadErrorContext
+): string {
+  return parseDownloadError(error, settings, context).message;
 }
 
 function readApiErrorDetail(value: unknown): string | undefined {
@@ -668,7 +750,7 @@ export async function downloadLmStudioModel(
   baseUrl: string,
   modelId: string,
   apiKey?: string,
-  options?: { downloadSource?: LibraryDownloadSource }
+  options?: { downloadSource?: LibraryDownloadSource; hfToken?: string }
 ): Promise<ModelDownloadJob> {
   const resolvedModel = resolveRemoteDownloadModelString(modelId, {
     downloadSource: options?.downloadSource,
@@ -684,11 +766,19 @@ export async function downloadLmStudioModel(
     );
   }
 
+  const hfToken = resolveHuggingFaceToken({ hfToken: options?.hfToken });
+  const attachHfToken = !!hfToken && modelStringNeedsHfAuth(resolvedModel);
+  const body: Record<string, string> = { model: resolvedModel };
+  if (attachHfToken) {
+    body.huggingface_token = hfToken;
+  }
+
   const res = await managementFetch(
     nativeV1Endpoint(baseUrl, "/models/download"),
     {
       method: "POST",
-      body: JSON.stringify({ model: resolvedModel }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     },
     apiKey
   );
@@ -821,6 +911,36 @@ function enrichLoadedRow(activeRow: LMModel, loadedRow: LMModel): LMModel {
   };
 }
 
+/** Models fully loaded in LM Studio memory (not merely loading). */
+export function listMemoryLoadedModels(models: Iterable<LMModel>): LMModel[] {
+  return dedupeModels([...models]).filter(isModelInMemory);
+}
+
+/**
+ * Pick a remote model for a new chat from memory-loaded models only.
+ * When several are loaded and none is preferred, returns `pickFrom` for the user to choose.
+ */
+export function resolveNewChatRemoteModel(
+  models: Iterable<LMModel>,
+  options?: { preferredId?: string | null }
+): { modelId: string | null; pickFrom: LMModel[] } {
+  const loaded = listMemoryLoadedModels(models);
+  if (loaded.length === 0) {
+    return { modelId: null, pickFrom: [] };
+  }
+  if (loaded.length === 1) {
+    return { modelId: loaded[0].id, pickFrom: [] };
+  }
+  const preferred = options?.preferredId?.trim();
+  if (preferred) {
+    const match = loaded.find((model) => isSameModelId(model.id, preferred));
+    if (match) {
+      return { modelId: match.id, pickFrom: [] };
+    }
+  }
+  return { modelId: null, pickFrom: loaded };
+}
+
 /** Split catalog rows into memory-loaded vs installed-only (no duplicate identities). */
 export function partitionLibraryModels(
   models: LMModel[],
@@ -899,11 +1019,127 @@ export async function clearRemoteModelSelection(
   }
 }
 
+type ResolvedRemoteModelTargets = {
+  catalogKey: string;
+  unloadInstanceId: string | null;
+  variantKeys: string[];
+};
+
+async function fetchNativeModelRecords(
+  baseUrl: string,
+  apiKey?: string
+): Promise<Record<string, unknown>[]> {
+  const base = managementApiBase(baseUrl);
+  const res = await managementFetch(`${base}/api/v1/models`, { method: "GET" }, apiKey);
+  if (!res.ok) return [];
+  const data = await res.json();
+  const rows = (data.models ?? data.data ?? []) as Record<string, unknown>[];
+  return Array.isArray(rows) ? rows : [];
+}
+
+function findNativeModelRecord(
+  records: Record<string, unknown>[],
+  modelId: string
+): Record<string, unknown> | undefined {
+  return records.find((raw) => {
+    const key = String(raw.key ?? raw.id ?? "");
+    if (isSameModelId(key, modelId)) return true;
+    const variants = raw.variants;
+    if (!Array.isArray(variants)) return false;
+    return variants.some((variant) => isSameModelId(String(variant), modelId));
+  });
+}
+
+async function resolveRemoteModelTargets(
+  baseUrl: string,
+  modelId: string,
+  apiKey?: string
+): Promise<ResolvedRemoteModelTargets> {
+  const fallback: ResolvedRemoteModelTargets = {
+    catalogKey: modelId,
+    unloadInstanceId: null,
+    variantKeys: [],
+  };
+  try {
+    const records = await fetchNativeModelRecords(baseUrl, apiKey);
+    const raw = findNativeModelRecord(records, modelId);
+    if (!raw) return fallback;
+
+    const key = String(raw.key ?? raw.id ?? modelId);
+    const selectedVariant =
+      typeof raw.selected_variant === "string" ? raw.selected_variant.trim() : "";
+    const variants = Array.isArray(raw.variants)
+      ? raw.variants.map((variant) => String(variant)).filter(Boolean)
+      : [];
+
+    let unloadInstanceId: string | null = null;
+    const instances = raw.loaded_instances;
+    if (Array.isArray(instances) && instances.length > 0) {
+      const first = instances[0] as Record<string, unknown>;
+      if (typeof first.id === "string" && first.id.trim()) {
+        unloadInstanceId = first.id.trim();
+      }
+    }
+
+    return {
+      catalogKey: selectedVariant || key,
+      unloadInstanceId,
+      variantKeys: variants,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+export const REMOTE_MODEL_FILE_DELETE_UNSUPPORTED =
+  "LM Studio can't delete model files from your phone yet. On your Mac, open LM Studio → My Models → ⋯ → Delete.";
+
+async function attemptDeleteRemoteModelFile(
+  baseUrl: string,
+  targets: ResolvedRemoteModelTargets,
+  apiKey?: string
+): Promise<boolean> {
+  const candidateIds = [
+    targets.catalogKey,
+    ...targets.variantKeys,
+    targets.unloadInstanceId,
+  ].filter((id): id is string => !!id?.trim());
+
+  const uniqueIds = [...new Set(candidateIds)];
+  let lastStatus = 0;
+  let lastDetail = "";
+
+  for (const id of uniqueIds) {
+    for (const body of [{ model: id }, { key: id }] as const) {
+      for (const path of ["/models/delete", "/models/remove"] as const) {
+        const res = await managementFetch(
+          nativeV1Endpoint(baseUrl, path),
+          { method: "POST", body: JSON.stringify(body) },
+          apiKey
+        );
+        if (res.ok) return true;
+        lastStatus = res.status;
+        lastDetail = await readApiError(res);
+        if (res.status !== 404 && res.status !== 405) {
+          throw new Error(`Delete failed (${res.status}): ${lastDetail}`);
+        }
+      }
+    }
+  }
+
+  if (lastStatus === 404 || lastStatus === 405) {
+    return false;
+  }
+  throw new Error(`Delete failed (${lastStatus}): ${lastDetail}`);
+}
+
 export async function unloadLmStudioModel(
   baseUrl: string,
-  instanceId: string,
+  modelId: string,
   apiKey?: string
 ): Promise<void> {
+  const targets = await resolveRemoteModelTargets(baseUrl, modelId, apiKey);
+  const instanceId = targets.unloadInstanceId ?? modelId;
   const res = await fetch(nativeV1Endpoint(baseUrl, "/models/unload"), {
     method: "POST",
     headers: authHeaders(apiKey),
@@ -932,7 +1168,27 @@ export function formatDeleteError(
   if (/isn't supported over the api/i.test(message)) {
     return message;
   }
+  if (message.includes(REMOTE_MODEL_FILE_DELETE_UNSUPPORTED)) {
+    return message;
+  }
   return message;
+}
+
+/** Permanently remove an installed model on the Mac (unloads first if in memory). */
+export async function deleteRemoteModel(
+  settings: Settings,
+  modelId: string,
+  accountToken?: string
+): Promise<void> {
+  const controlUrl = resolveModelControlUrl(settings);
+  if (!controlUrl) {
+    throw new Error(formatDeleteError(new Error("no control url"), settings));
+  }
+  const accountRef = accountToken
+    ? ({ token: accountToken } as Pick<LMAccount, "token">)
+    : null;
+  const mgmtKey = resolveManagementApiKey(settings, accountRef);
+  await deleteLmStudioModel(controlUrl, modelId, mgmtKey);
 }
 
 /** Permanently remove a model from the Mac (unloads first if in memory). */
@@ -948,29 +1204,48 @@ export async function deleteLmStudioModel(
     );
   }
 
-  try {
-    await unloadLmStudioModel(baseUrl, modelId, apiKey);
-  } catch {
-    // Not loaded — still attempt file removal
+  const targets = await resolveRemoteModelTargets(baseUrl, modelId, apiKey);
+  const wasLoaded = !!targets.unloadInstanceId;
+
+  if (wasLoaded) {
+    try {
+      await unloadLmStudioModel(baseUrl, modelId, apiKey);
+    } catch {
+      // Still attempt file removal when unload fails.
+    }
   }
 
-  const res = await managementFetch(
-    nativeV1Endpoint(baseUrl, "/models/delete"),
-    {
-      method: "POST",
-      body: JSON.stringify({ model: modelId }),
-    },
-    apiKey
-  );
-  if (res.ok) return;
-
-  const detail = await readApiError(res);
-  if (res.status === 404) {
-    throw new Error(
-      "LM Studio can't delete model files from your phone — remove them on your Mac in LM Studio → My Models → ⋯ → Delete."
-    );
+  const deleted = await attemptDeleteRemoteModelFile(baseUrl, targets, apiKey);
+  if (deleted) {
+    try {
+      const remaining = await fetchModels(baseUrl, apiKey);
+      if (!remaining.some((model) => isSameModelId(model.id, modelId))) {
+        return;
+      }
+    } catch {
+      return;
+    }
   }
-  throw new Error(`Delete failed (${res.status}): ${detail}`);
+
+  if (wasLoaded) {
+    try {
+      const remaining = await fetchModels(baseUrl, apiKey);
+      const stillLoaded = remaining.some(
+        (model) => isSameModelId(model.id, modelId) && isModelInMemory(model)
+      );
+      if (!stillLoaded) {
+        throw new Error(
+          `${REMOTE_MODEL_FILE_DELETE_UNSUPPORTED} The model was unloaded from memory.`
+        );
+      }
+    } catch (e) {
+      if (e instanceof Error && e.message.includes(REMOTE_MODEL_FILE_DELETE_UNSUPPORTED)) {
+        throw e;
+      }
+    }
+  }
+
+  throw new Error(REMOTE_MODEL_FILE_DELETE_UNSUPPORTED);
 }
 
 /** Unload all models currently in memory on the Mac, optionally keeping one. */
@@ -1250,7 +1525,7 @@ export async function scanLocalNetwork(
 
   for (let i = 0; i < hosts.length; i += SCAN_BATCH_SIZE) {
     const batch = hosts.slice(i, i + SCAN_BATCH_SIZE);
-    const results = await Promise.allSettled(
+    await Promise.allSettled(
       batch.map(async (host) => {
         const url = `http://${host}:${port}/v1`;
         if (foundUrls.has(url)) return null;
@@ -1536,6 +1811,13 @@ async function streamChatWeb(
     return "error";
   } finally {
     reader.releaseLock();
+  }
+
+  // Flush a trailing SSE event that arrived without a final newline.
+  const tail = parseSSEDelta(buffer);
+  if (tail) {
+    fullText += tail;
+    callbacks.onToken(tail);
   }
 
   if (!fullText) {

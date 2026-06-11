@@ -1,8 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useMemo } from "react";
-import { StyleSheet, Text, View } from "react-native";
-import { ModelModality } from "../lib/vision-models";
+import { StyleSheet, View } from "react-native";
 import { ThemeColors, useTheme } from "../lib/theme";
+
+/** Match ModelPicker capability filters / LM Studio modality badges. */
+export const CAPABILITY_VISION_ICON = "image-outline" as const;
+export const CAPABILITY_VIDEO_ICON = "videocam-outline" as const;
+export const CAPABILITY_THINKING_ICON = "bulb-outline" as const;
 
 /** Unsupported thinking/vision — light grey in light mode, dim in dark mode. */
 const CAPABILITY_INACTIVE_LIGHT = "#c0c0c0";
@@ -15,7 +19,6 @@ function capabilityColors(
   vision: boolean,
   video: boolean
 ): {
-  text: string;
   thinking: string;
   vision: string;
   video: string;
@@ -24,7 +27,6 @@ function capabilityColors(
 
   if (isDark) {
     return {
-      text: highlighted ? colors.primaryLight : inactive,
       thinking: thinking
         ? highlighted
           ? "#fde68a"
@@ -44,7 +46,6 @@ function capabilityColors(
   }
 
   return {
-    text: highlighted ? colors.textMuted : inactive,
     thinking: thinking
       ? highlighted
         ? "#b45309"
@@ -64,76 +65,57 @@ function capabilityColors(
 }
 
 export function ModelCapabilityIcons({
-  modalities = ["text"],
   thinking = false,
+  vision = false,
+  video = false,
   colors,
   size = 14,
   highlighted = false,
-  /** Chat footer — show all capability icons; unsupported ones stay grey. */
-  showUnsupported = false,
 }: {
-  modalities?: ModelModality[];
   thinking?: boolean;
+  vision?: boolean;
+  video?: boolean;
   colors: ThemeColors;
   size?: number;
   highlighted?: boolean;
-  showUnsupported?: boolean;
 }) {
   const { isDark } = useTheme();
-  const hasText = modalities.includes("text");
-  const hasVision = modalities.includes("image");
-  const hasVideo = modalities.includes("video");
 
   const palette = useMemo(
-    () => capabilityColors(colors, isDark, highlighted, thinking, hasVision, hasVideo),
-    [colors, isDark, highlighted, thinking, hasVision, hasVideo]
+    () => capabilityColors(colors, isDark, highlighted, thinking, vision, video),
+    [colors, isDark, highlighted, thinking, vision, video]
   );
 
-  if (!showUnsupported && !thinking && !hasVision && !hasVideo && !hasText) {
+  if (!thinking && !vision && !video) {
     return null;
   }
 
-  const glyphSize = Math.max(10, size - 2);
-
   return (
     <View style={styles.row}>
-      {(showUnsupported || hasText) && (
-        <Text
-          style={{
-            color: palette.text,
-            fontSize: glyphSize,
-            fontWeight: "700",
-            lineHeight: glyphSize + 2,
-          }}
-          accessibilityLabel="Text model"
-        >
-          Aa
-        </Text>
-      )}
-      {(showUnsupported || hasVision) && (
+      {vision ? (
         <Ionicons
-          name="image-outline"
+          name={CAPABILITY_VISION_ICON}
           size={size}
           color={palette.vision}
-          accessibilityLabel={hasVision ? "Vision model" : "No vision"}
+          accessibilityLabel="Vision model"
         />
-      )}
-      {(showUnsupported || hasVideo) && (
+      ) : null}
+      {video ? (
         <Ionicons
-          name="videocam-outline"
+          name={CAPABILITY_VIDEO_ICON}
           size={size}
           color={palette.video}
-          accessibilityLabel={hasVideo ? "Video model" : "No video"}
+          accessibilityLabel="Video model"
         />
-      )}
-      {(showUnsupported || thinking) && (
+      ) : null}
+      {thinking ? (
         <Ionicons
-          name="bulb-outline"
+          name={CAPABILITY_THINKING_ICON}
           size={size}
           color={palette.thinking}
-          accessibilityLabel={thinking ? "Thinking model" : "Not a thinking model"}
+          accessibilityLabel="Thinking model"
         />
-      )}
+      ) : null}
     </View>
   );
 }

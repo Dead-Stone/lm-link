@@ -34,12 +34,21 @@ export function extractModelParamLabel(
   return null;
 }
 
-export function parseModelName(id: string): {
+export type ParsedModelName = {
   displayName: string;
   family: string;
   quant: string | null;
   sizeTag: string | null;
-} {
+};
+
+// Model ids are stable and bounded; parsing is pure, so cache results. This is
+// called per-row per-render across the library — caching removes that regex cost.
+const parsedModelNameCache = new Map<string, ParsedModelName>();
+
+export function parseModelName(id: string): ParsedModelName {
+  const cached = parsedModelNameCache.get(id);
+  if (cached) return cached;
+
   const parts = id.split("/");
   const filename = parts[parts.length - 1].replace(/\.gguf$/i, "");
 
@@ -72,7 +81,9 @@ export function parseModelName(id: string): {
   else if (lower.includes("solar")) family = "Solar";
   else if (lower.includes("neural")) family = "Neural";
 
-  return { displayName, family, quant, sizeTag };
+  const result: ParsedModelName = { displayName, family, quant, sizeTag };
+  parsedModelNameCache.set(id, result);
+  return result;
 }
 
 /** Match a model haystack against a free-text query (substring or all tokens). */

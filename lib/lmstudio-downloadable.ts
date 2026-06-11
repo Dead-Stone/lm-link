@@ -103,12 +103,41 @@ export function hfMetadataLooksNonChatLmStudioModel(options: {
 
   for (const tag of options.tags ?? []) {
     const lower = tag.toLowerCase();
+    if (
+      lower === "sentence-transformers" ||
+      lower.includes("feature-extraction") ||
+      lower === "embeddings" ||
+      lower === "embedding"
+    ) {
+      return true;
+    }
     if (/text-to-video|image-to-video|text-to-image|diffusers-only|comfyui/i.test(lower)) {
       return true;
     }
   }
 
   return false;
+}
+
+/** LM Studio rows that are embedding / retrieval models, not chat LLMs. */
+export function isEmbeddingLmModel(model: { id: string; type?: string | null }): boolean {
+  const type = model.type?.trim().toLowerCase();
+  if (type === "embeddings" || type === "embedding") return true;
+  const key = model.id.trim().toLowerCase();
+  if (!key) return false;
+  return (
+    /\bembed(?:ding)?\b/i.test(key) ||
+    /\bbge-/i.test(key) ||
+    /\be5-/i.test(key) ||
+    /mxbai-embed/i.test(key) ||
+    /nomic-embed/i.test(key)
+  );
+}
+
+/** Chat-capable Mac/PC models for pickers and the system model library. */
+export function isChatSelectableLmModel(model: { id: string; type?: string | null }): boolean {
+  if (isEmbeddingLmModel(model)) return false;
+  return isLmStudioMacDownloadModel(model.id);
 }
 
 function hfMetadataLooksGenerativeMediaOnly(options: {

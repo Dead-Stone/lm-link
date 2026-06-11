@@ -25,23 +25,26 @@ const config = {
       backgroundColor: "#5B4FCF",
       foregroundImage: "./assets/adaptive-icon.png",
     },
+    /** Static splash before JS loads — animated opening uses hero-animation.gif. */
+    splash: {
+      backgroundColor: "#000000",
+      image: "./assets/splash-icon.png",
+      resizeMode: "contain",
+    },
     permissions: [
       "android.permission.INTERNET",
       "android.permission.ACCESS_NETWORK_STATE",
       "android.permission.ACCESS_WIFI_STATE",
       "android.permission.CHANGE_WIFI_MULTICAST_STATE",
-      "android.permission.READ_MEDIA_IMAGES",
-      "android.permission.READ_MEDIA_VIDEO",
       "android.permission.CAMERA",
     ],
     blockedPermissions: [
       "android.permission.RECORD_AUDIO",
       "android.permission.SYSTEM_ALERT_WINDOW",
+      /** Gallery via Android photo picker — no broad media library access (Play policy). */
+      "android.permission.READ_MEDIA_IMAGES",
+      "android.permission.READ_MEDIA_VIDEO",
     ],
-  },
-  web: {
-    bundler: "metro",
-    favicon: "./assets/favicon.png",
   },
   plugins: [
     "expo-router",
@@ -52,6 +55,11 @@ const config = {
         image: "./assets/splash-icon.png",
         imageWidth: 200,
         resizeMode: "contain",
+        dark: {
+          backgroundColor: "#000000",
+          image: "./assets/splash-icon.png",
+          imageWidth: 200,
+        },
       },
     ],
     [
@@ -67,6 +75,7 @@ const config = {
     "expo-secure-store",
     "./plugins/withLocalNetworkAccess.js",
     "expo-font",
+    "expo-audio",
   ],
   extra: {
     router: {},

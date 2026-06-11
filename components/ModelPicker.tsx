@@ -26,23 +26,33 @@ import {
   resolveManagementApiKey,
   resolveManagementBaseUrl,
 } from "../lib/api";
-import { LIBRARY_PAGE_SIZE } from "../lib/library-pagination";
+import { LIBRARY_PAGE_SIZE, libraryHasMorePages } from "../lib/library-pagination";
 import { isSameModelId, resolveCanonicalModelId } from "../lib/model-id";
 import { extractModelParamLabel, matchesModelSearchQuery, parseModelName } from "../lib/model-name";
-import { resolveEntryCatalogSource } from "../lib/library-filters";
+import {
+  catalogSourceLabel,
+  resolveEntryCatalogSource,
+  resolveInstalledRemoteCatalogSource,
+} from "../lib/library-filters";
 import { matchesLibrarySearch } from "../lib/library-search";
-import { isLmStudioMacDownloadModel } from "../lib/lmstudio-downloadable";
+import {
+  isChatSelectableLmModel,
+  isEmbeddingLmModel,
+  isLmStudioMacDownloadModel,
+} from "../lib/lmstudio-downloadable";
 import { useApp } from "../lib/context";
 import { createModalTheme } from "../lib/modal-theme";
 import { radii, ThemeColors, useAccentPalette, useTheme } from "../lib/theme";
+import { resolveRemoteLibrarySizeLabelWithHfCache } from "../lib/huggingface-model-search";
 import { formatFileSize, isFileSizeLabel, resolveFileSizeLabel } from "../lib/model-size";
 import {
   getQuickAccessRemoteLibrary,
   isModelInstalled,
-  REMOTE_MODEL_LIBRARY,
   LibraryDownloadSource,
+  REMOTE_MODEL_LIBRARY,
   RemoteLibraryEntry,
   normalizeModelKey,
+  resolveRemoteCatalogEntry,
   resolveRemoteLibraryDisplayName,
 } from "../lib/remote-model-library";
 import { LMModel, ModelPlatform } from "../lib/types";
@@ -69,15 +79,28 @@ import {
   MODEL_ROW_ACTION_MIN_MS,
 } from "../lib/model-row-action";
 import { useIndeterminateLoadProgress } from "../lib/use-indeterminate-load-progress";
+import { playModelUnloadSound } from "../lib/model-picker-sounds";
 import SwipeToDeleteRow from "./SwipeToDeleteRow";
 import { AnimatedLibraryRow } from "./LibraryModelSections";
-import SectionHintLines, { createSectionSubtitleStyle } from "./SectionHintLines";
+import SectionHintLines from "./SectionHintLines";
+import {
+  createListStyles,
+  createRowStyles,
+  createLibrarySectionStyles,
+  createSectionStyles,
+} from "./ModelPicker.styles";
+import CatalogDownloadProgress from "./CatalogDownloadProgress";
+import DownloadIconCancelOverlay from "./DownloadIconCancelOverlay";
+import { useRemoteCatalogDownloads } from "../lib/use-remote-catalog-download";
+import { usePcDownloadFromPhoneConsent } from "../lib/use-pc-download-consent";
+import { modalPageTopPadding } from "../lib/safe-area-layout";
 
 const GestureSectionList = createNativeWrapper(RNSectionList, {
   disallowInterruption: true,
   shouldCancelWhenOutside: false,
-}) as typeof RNSectionList;
+}) as unknown as typeof RNSectionList;
 import ThemedError from "./ThemedError";
+import { ErrorKind } from "../lib/errors";
 
 // ─── Model parsing helpers ────────────────────────────────────────────────────
 
@@ -265,7 +288,9 @@ export function resolveRemoteModelTrait(modelId: string): ModelTrait | null {
   if (/codellama|coder|starcoder|\bcode\b/.test(hay)) {
     return { label: "Coding", color: "#f59e0b" };
   }
-  if (/embed/.test(hay)) return { label: "Embed", color: "#6b7280" };
+  if (isEmbeddingLmModel({ id: modelId })) {
+    return { label: "Embed", color: "#6b7280" };
+  }
   return null;
 }
 
@@ -510,6 +535,14 @@ function resolveRemoteChipLabel(
 }
 
 /** Remote model rows — modality · size · chip, publisher last. Always fills gaps from id/metadata. */
+export function catalogSourceStatItem(source: LibraryDownloadSource): ModelStatItem {
+  return {
+    icon: "albums-outline",
+    label: catalogSourceLabel(source),
+    group: "source",
+  };
+}
+
 export function getRemoteInstalledStatItems(
   model: LMModel,
   catalog: Iterable<LMModel> = []
@@ -519,6 +552,7 @@ export function getRemoteInstalledStatItems(
   const downloadSize = resolveRemoteDownloadSizeLabel(model, parsed);
   const paramLabel = resolveRemoteParamLabel(model, parsed);
   const chipLabel = resolveRemoteChipLabel(model, parsed, downloadSize, paramLabel);
+  const catalogSource = resolveInstalledRemoteCatalogSource(model.id);
   const capabilityItems = getModelCapabilityStatItems(model.id, {
     catalog,
     modelType: model.type,
@@ -544,6 +578,7 @@ export function getRemoteInstalledStatItems(
         ? [{ icon: "hardware-chip-outline" as const, label: chipLabel }]
         : []),
       ...(publisher ? [{ icon: "business-outline" as const, label: publisher }] : []),
+      catalogSourceStatItem(catalogSource),
     ]),
     ...(downloadSize
       ? [{ icon: "document-outline" as const, label: downloadSize, role: "size" as const }]
@@ -594,7 +629,7 @@ export function getRemoteLibraryEntryStatItems(entry: {
     badge: entry.badge,
     haystack: remoteLibraryEntryHaystack(entry),
   });
-  const downloadSize = resolveFileSizeLabel(entry.sizeLabel, entry.id);
+  const downloadSize = resolveRemoteLibrarySizeLabelWithHfCache(entry);
   const paramLabel =
     extractModelParamLabel(entry.params, entry.id, parsed.displayName) ??
     entry.params ??
@@ -764,6 +799,7 @@ export function ModelStatLine({
   rowStyle,
   maxItems = MAX_MODEL_STATS,
   muted = false,
+  centered = false,
 }: {
   items: ModelStatItem[];
   colors: ThemeColors;
@@ -772,6 +808,8 @@ export function ModelStatLine({
   maxItems?: number;
   /** Neutral stat colors — no purple or trait accents (unselected rows). */
   muted?: boolean;
+  /** Center stat chips (e.g. loaded-model deck). */
+  centered?: boolean;
 }) {
   const { isDark } = useTheme();
   const sizeItem = items.find((item) => item.role === "size" && item.label);
@@ -780,7 +818,7 @@ export function ModelStatLine({
   if (visible.length === 0 && !sizeItem) return null;
 
   const baseTextColor = resolveStatTextColor(colors, textStyle);
-  const flatTextStyle = StyleSheet.flatten(textStyle);
+  const flatTextStyle = StyleSheet.flatten(textStyle) as TextStyle;
   const statFontSize =
     typeof flatTextStyle?.fontSize === "number" ? flatTextStyle.fontSize : 11;
   const sizeFontSize = statFontSize + 2;
@@ -872,6 +910,33 @@ export function ModelStatLine({
         </View>
       );
     });
+
+  if (centered && !sizeItem && visible.length > 0) {
+    return (
+      <View
+        style={[
+          rowStyle,
+          {
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+            width: "100%",
+          },
+        ]}
+      >
+        <View
+          style={{
+            flexDirection: "row",
+            flexWrap: "nowrap",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          {renderStatItems(visible)}
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View
@@ -973,7 +1038,16 @@ export function LibraryCatalogRow({
   trait,
   statItems,
   onDownload,
+  onPause,
+  onResume,
+  onCancel,
   disabled,
+  downloadPhase = "idle",
+  canPause = false,
+  progress = null,
+  downloadError = null,
+  downloadErrorKind = "network",
+  onClearError,
   colors,
   rowStyles: rowStylesProp,
   iconMonochrome = false,
@@ -986,7 +1060,16 @@ export function LibraryCatalogRow({
   trait: ModelTrait | null;
   statItems: ModelStatItem[];
   onDownload: () => void;
+  onPause?: () => void;
+  onResume?: () => void;
+  onCancel?: () => void;
   disabled?: boolean;
+  downloadPhase?: "idle" | "downloading" | "paused";
+  canPause?: boolean;
+  progress?: number | null;
+  downloadError?: string | null;
+  downloadErrorKind?: ErrorKind;
+  onClearError?: () => void;
   colors: ThemeColors;
   rowStyles?: ReturnType<typeof createRowStyles>;
   iconMonochrome?: boolean;
@@ -994,41 +1077,88 @@ export function LibraryCatalogRow({
 }) {
   const internalRowStyles = useMemo(() => createRowStyles(colors), [colors]);
   const rowStyles = rowStylesProp ?? internalRowStyles;
+  const pauseResumeEnabled = platform === "phone" && canPause;
+  const paused = pauseResumeEnabled && downloadPhase === "paused";
+  const downloading = downloadPhase === "downloading";
+  const transferActive = downloading || paused;
+
+  const handleActionPress = () => {
+    if (paused) {
+      onResume?.();
+      return;
+    }
+    if (downloading && pauseResumeEnabled) {
+      onPause?.();
+      return;
+    }
+    if (!transferActive) onDownload();
+  };
+
+  const downloadBtnLocked = disabled || (downloading && !pauseResumeEnabled);
 
   return (
-    <View style={rowStyles.catalogRow}>
-      <View style={rowStyles.catalogIcon}>
-        <ModelModeBadgeIcon
-          platform={platform}
-          modelId={modelId}
-          provider={provider}
-          label={name}
-          size={26}
-          color={colors.textMuted}
-          monochrome={iconMonochrome}
-          catalogSource={catalogSource}
-        />
-      </View>
-      <View style={rowStyles.catalogBody}>
-        <View style={rowStyles.titleRow}>
-          <Text style={rowStyles.name} numberOfLines={1}>
-            {name}
-          </Text>
-          {trait ? <ModelTraitBadge trait={trait} muted colors={colors} /> : null}
+    <View style={rowStyles.catalogRowWrap}>
+      <View style={rowStyles.catalogRow}>
+        <View style={rowStyles.catalogIcon}>
+          <ModelModeBadgeIcon
+            platform={platform}
+            modelId={modelId}
+            provider={provider}
+            label={name}
+            size={26}
+            color={colors.textMuted}
+            monochrome={iconMonochrome}
+            catalogSource={catalogSource}
+          />
+          {transferActive && onCancel && platform === "phone" ? (
+            <DownloadIconCancelOverlay onPress={onCancel} />
+          ) : null}
         </View>
-        <ModelStatLine items={statItems} colors={colors} textStyle={rowStyles.stats} muted />
+        <View style={rowStyles.catalogBody}>
+          <View style={rowStyles.titleRow}>
+            <Text style={rowStyles.name} numberOfLines={1}>
+              {name}
+            </Text>
+            {trait ? <ModelTraitBadge trait={trait} muted colors={colors} /> : null}
+          </View>
+          <ModelStatLine items={statItems} colors={colors} textStyle={rowStyles.stats} muted />
+          {transferActive ? (
+            <CatalogDownloadProgress
+              progress={progress}
+              colors={colors}
+            />
+          ) : null}
+        </View>
+        <Pressable
+          onPress={handleActionPress}
+          disabled={downloadBtnLocked}
+          style={({ pressed }) => [
+            rowStyles.catalogDownloadBtn,
+            transferActive && rowStyles.catalogDownloadBtnActive,
+            downloadBtnLocked && rowStyles.catalogDownloadBtnDisabled,
+            pressed && !downloadBtnLocked && rowStyles.catalogDownloadBtnPressed,
+          ]}
+        >
+          {downloading && !pauseResumeEnabled ? (
+            <ActivityIndicator size="small" color={colors.primaryLight} />
+          ) : paused ? (
+            <Ionicons name="play" size={16} color={colors.primaryLight} />
+          ) : downloading ? (
+            <Ionicons name="pause" size={16} color={colors.primaryLight} />
+          ) : (
+            <Ionicons name="cloud-download-outline" size={18} color={colors.primaryLight} />
+          )}
+        </Pressable>
       </View>
-      <Pressable
-        onPress={onDownload}
-        disabled={disabled}
-        style={({ pressed }) => [
-          rowStyles.catalogDownloadBtn,
-          disabled && rowStyles.catalogDownloadBtnDisabled,
-          pressed && !disabled && rowStyles.catalogDownloadBtnPressed,
-        ]}
-      >
-        <Ionicons name="cloud-download-outline" size={18} color={colors.primaryLight} />
-      </Pressable>
+      {downloadError ? (
+        <ThemedError
+          variant="inline"
+          message={downloadError}
+          kind={downloadErrorKind}
+          onDismiss={onClearError ?? (() => {})}
+          style={rowStyles.catalogRowError}
+        />
+      ) : null}
     </View>
   );
 }
@@ -1079,6 +1209,7 @@ function ModelRow({
 }) {
   const { displayName } = parseModelName(model.id);
   const detailItems = getRemoteInstalledStatItems(model, modelCatalog);
+  const catalogSource = resolveInstalledRemoteCatalogSource(model.id);
   const trait = resolveRemoteModelTrait(model.id);
   const iconColor = isCurrent ? colors.primaryLight : colors.textDim;
   const iconMonochrome = greyUnselectedIcons && !isCurrent;
@@ -1137,6 +1268,7 @@ function ModelRow({
         size={badgeSize}
         color={iconColor}
         monochrome={iconMonochrome}
+        catalogSource={catalogSource}
       />
     </View>
   );
@@ -1273,8 +1405,8 @@ export function LibrarySeeMoreButton({
           alignItems: "center",
           justifyContent: "center",
           gap: 4,
-          marginTop: 4,
-          paddingVertical: 8,
+          marginTop: 2,
+          paddingVertical: 6,
         },
         btnPressed: { opacity: 0.65 },
         btnDisabled: { opacity: 0.45 },
@@ -1328,17 +1460,21 @@ export function RemoteModelList({
   libraryLayout,
   browseOnly,
   onEjectModel,
-  onDeleteModel,
   ejectingModelId,
-  deletingModelId,
   managementActionsDisabled,
   showModalityFilters,
   modalityFilter: controlledModalityFilter,
   onModalityFilterChange,
   onActionComplete,
   onOpenLibrary,
+  openLibraryOnUninstalledSelect = true,
+  onOpenSettings,
   quickAccessCatalog = false,
+  hideCatalog = false,
   greyUnselectedIcons = false,
+  hideLoadedSection = false,
+  embedInParentScroll = false,
+  prefetchedModels,
 }: {
   active: boolean;
   selectedModelId?: string;
@@ -1369,9 +1505,7 @@ export function RemoteModelList({
   /** Library browse mode — view and download only (no load/eject). */
   browseOnly?: boolean;
   onEjectModel?: (modelId: string) => void;
-  onDeleteModel?: (modelId: string) => void;
   ejectingModelId?: string | null;
-  deletingModelId?: string | null;
   managementActionsDisabled?: boolean;
   /** Show All / Text / Images / Video filter chips above the list. */
   showModalityFilters?: boolean;
@@ -1381,19 +1515,32 @@ export function RemoteModelList({
   onActionComplete?: () => void;
   /** Chat picker: catalog rows open the library instead of selecting. */
   onOpenLibrary?: () => void;
+  /** When false, uninstalled row taps do not redirect to the library (choose-model flow). */
+  openLibraryOnUninstalledSelect?: boolean;
+  /** Connection error — open Settings to fix Mac / hub URL. */
+  onOpenSettings?: () => void;
   /** Chat picker: curated download rows at the top instead of search + full catalog. */
   quickAccessCatalog?: boolean;
+  /** Selection-only mode: hide the downloadable catalog ("Top models") entirely. */
+  hideCatalog?: boolean;
   /** Grey platform shell + brand logo on unselected rows (model picker). */
   greyUnselectedIcons?: boolean;
+  /** Choose-model deck shows loaded models — hide the duplicate loaded rows. */
+  hideLoadedSection?: boolean;
+  /** Render list body in a plain View — parent ScrollView owns vertical scroll. */
+  embedInParentScroll?: boolean;
+  /** Show cached rows immediately while refreshing (choose-model sheet). */
+  prefetchedModels?: LMModel[];
 }) {
   const { settings, updateSettings, account } = useApp();
   const colors = useAccentPalette();
   const styles = useMemo(() => createListStyles(colors), [colors]);
   const rowStyles = useMemo(() => createRowStyles(colors), [colors]);
   const sectionStyles = useMemo(() => createSectionStyles(colors), [colors]);
+  const libraryLinkAvailable = Boolean(onOpenLibrary || embedInParentScroll);
 
-  const [models, setModels] = useState<LMModel[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [models, setModels] = useState<LMModel[]>(() => prefetchedModels ?? []);
+  const [loading, setLoading] = useState(() => !(prefetchedModels && prefetchedModels.length > 0));
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -1406,10 +1553,24 @@ export function RemoteModelList({
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [internalEjectingId, setInternalEjectingId] = useState<string | null>(null);
+  const {
+    downloads: catalogDownloads,
+    errors: catalogDownloadErrors,
+    revision: catalogDownloadRevision,
+    startDownload: startCatalogDownload,
+    clearError: clearCatalogDownloadError,
+    isActive: isCatalogDownloadActive,
+  } = useRemoteCatalogDownloads(settings);
   const effectiveBaseUrl = serverUrl ?? settings.baseUrl;
+  const managementUrl = useMemo(
+    () => resolveManagementBaseUrl(settings),
+    [settings.baseUrl, settings.localServerUrl]
+  );
   const listBaseUrl =
-    serverUrl ?? resolveManagementBaseUrl(settings) ?? effectiveBaseUrl;
+    serverUrl ?? managementUrl ?? effectiveBaseUrl;
   const listApiKey = resolveManagementApiKey(settings, account);
+  const catalogDownloadsBlocked = !managementUrl;
+  const { enabled: pcDownloadsEnabled } = usePcDownloadFromPhoneConsent();
   const remotePlatform: ModelPlatform =
     platform ?? (isHubUrl(effectiveBaseUrl) ? "hub" : "pc");
 
@@ -1422,7 +1583,8 @@ export function RemoteModelList({
 
   const load = useCallback(async (): Promise<LMModel[]> => {
     if (!active) return [];
-    setLoading(true);
+    const showBlockingLoader = models.length === 0;
+    if (showBlockingLoader) setLoading(true);
     setError(null);
     try {
       const m = await fetchModels(listBaseUrl, listApiKey);
@@ -1434,7 +1596,7 @@ export function RemoteModelList({
     } finally {
       setLoading(false);
     }
-  }, [active, listBaseUrl, listApiKey]);
+  }, [active, listBaseUrl, listApiKey, models.length]);
 
   const isSearchControlled = searchQuery !== undefined;
   const effectiveSearch = isSearchControlled ? (searchQuery ?? "") : search;
@@ -1450,6 +1612,33 @@ export function RemoteModelList({
       load();
     }
   }, [active, browseMode, load, reloadKey, isSearchControlled, controlledModalityFilter]);
+
+  useEffect(() => {
+    if (!prefetchedModels) return;
+    setModels(prefetchedModels);
+    if (prefetchedModels.length > 0) setLoading(false);
+  }, [prefetchedModels]);
+
+  useEffect(() => {
+    if (!active || !error) return;
+    let cancelled = false;
+    const retry = async () => {
+      if (cancelled) return;
+      try {
+        const m = await fetchModels(listBaseUrl, listApiKey);
+        if (cancelled) return;
+        setModels(m);
+        setError(null);
+      } catch {
+        /* keep showing error — next interval will retry */
+      }
+    };
+    const id = setInterval(() => void retry(), 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [active, error, listBaseUrl, listApiKey]);
 
   useEffect(() => {
     if (active && browseOnly && libraryLayout) {
@@ -1468,6 +1657,7 @@ export function RemoteModelList({
   const filteredModels = useMemo(() => {
     const q = effectiveSearch.trim().toLowerCase();
     let filtered = models.filter((m) => {
+      if (!isChatSelectableLmModel(m)) return false;
       const parsed = parseModelName(m.id);
       const haystack = [
         m.id,
@@ -1522,9 +1712,9 @@ export function RemoteModelList({
     }
 
     const selected = effectiveSelectedId
-      ? filtered.filter((m) => m.id === effectiveSelectedId)
+      ? filtered.filter((m) => isSameModelId(m.id, effectiveSelectedId))
       : [];
-    const rest = filtered.filter((m) => m.id !== effectiveSelectedId);
+    const rest = filtered.filter((m) => !isSameModelId(m.id, effectiveSelectedId));
     const sortedRest = [...rest].sort((a, b) => {
       const pa = parseModelName(a.id);
       const pb = parseModelName(b.id);
@@ -1562,7 +1752,9 @@ export function RemoteModelList({
   }, [libraryModels, browseOnly, libraryLayout, installedVisibleCount]);
 
   const hasMoreInstalled =
-    browseOnly && libraryLayout && libraryModels.length > installedVisibleCount;
+    browseOnly &&
+    libraryLayout &&
+    libraryHasMorePages(installedVisibleCount, libraryModels.length);
 
   const { loaded: loadedLibraryModels, installed: installedLibraryModels } = useMemo(() => {
     if (!libraryLayout) return { loaded: [] as LMModel[], installed: [] as LMModel[] };
@@ -1574,7 +1766,24 @@ export function RemoteModelList({
 
   const installedIds = useMemo(() => models.map((model) => model.id), [models]);
 
+  const handleCatalogDownload = useCallback(
+    (entry: RemoteLibraryEntry) => {
+      if (!pcDownloadsEnabled || !managementUrl) return;
+      void startCatalogDownload(entry.id, {
+        managementUrl,
+        apiKey: listApiKey,
+        downloadSource: entry.downloadSource,
+        onComplete: () => {
+          void load();
+        },
+      });
+    },
+    [pcDownloadsEnabled, managementUrl, listApiKey, startCatalogDownload, load]
+  );
+
   const catalogEntries = useMemo(() => {
+    if (hideCatalog) return [];
+    if (!pcDownloadsEnabled) return [];
     if (!libraryLayout || !onOpenLibrary || browseMode) return [];
     if (quickAccessCatalog) {
       return getQuickAccessRemoteLibrary(installedIds, modalityFilter);
@@ -1585,10 +1794,25 @@ export function RemoteModelList({
     onOpenLibrary,
     browseMode,
     quickAccessCatalog,
+    hideCatalog,
     installedIds,
     effectiveSearch,
     modalityFilter,
+    catalogDownloadRevision,
+    pcDownloadsEnabled,
   ]);
+
+  const catalogEntriesWithActive = useMemo(() => {
+    const ids = new Set(catalogEntries.map((entry) => entry.id));
+    const trackedIds = new Set([
+      ...Object.keys(catalogDownloads),
+      ...Object.keys(catalogDownloadErrors),
+    ]);
+    const extras = [...trackedIds]
+      .filter((id) => !ids.has(id))
+      .map((id) => resolveRemoteCatalogEntry(id));
+    return [...catalogEntries, ...extras];
+  }, [catalogEntries, catalogDownloads, catalogDownloadErrors]);
 
   const sections = useMemo(() => {
     if (libraryLayout) return [];
@@ -1619,6 +1843,7 @@ export function RemoteModelList({
         ejectRemoteModel(settings, model.id, account?.token),
         new Promise((resolve) => setTimeout(resolve, MODEL_ROW_ACTION_MIN_MS)),
       ]);
+      void playModelUnloadSound();
     } catch (e: unknown) {
       setLoadError(formatLoadError(e, settings));
       await new Promise((resolve) => setTimeout(resolve, MODEL_ROW_ACTION_FADE_OUT_MS));
@@ -1638,26 +1863,31 @@ export function RemoteModelList({
     await new Promise((resolve) => setTimeout(resolve, MODEL_ROW_ACTION_FADE_OUT_MS));
     setInternalEjectingId(null);
     await load();
-    onActionComplete?.();
   }
 
   async function handleSelect(modelId: string) {
     const isInstalled = models.some((model) => isSameModelId(model.id, modelId));
-    if (libraryLayout && onOpenLibrary && !isInstalled) {
-      onOpenLibrary();
+    if (libraryLayout && !isInstalled) {
+      if (openLibraryOnUninstalledSelect && onOpenLibrary) {
+        onOpenLibrary();
+        return;
+      }
       return;
     }
 
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     if (isSameModelId(effectiveSelectedId, modelId)) {
-      if (!browseOnly) {
-        const currentModel = models.find((m) => isSameModelId(m.id, modelId));
-        if (currentModel) {
-          void performEject(currentModel);
-        }
+      const currentModel = models.find((m) => isSameModelId(m.id, modelId));
+      if (!browseOnly && currentModel && isModelInMemory(currentModel)) {
+        void performEject(currentModel);
+        return;
       }
-      return;
+      if (!browseOnly && libraryLayout && currentModel && !isModelInMemory(currentModel)) {
+        // Conversation already references this model — load it into memory.
+      } else {
+        return;
+      }
     }
 
     const showLoadState = (loadOnSelect || libraryLayout) && !browseOnly;
@@ -1685,6 +1915,7 @@ export function RemoteModelList({
       }
     }
 
+    let selectionSucceeded = false;
     try {
       const refreshed = loadOnSelect ? await load() : models;
       const canonicalId = resolveCanonicalModelId(refreshed, modelId);
@@ -1693,6 +1924,9 @@ export function RemoteModelList({
         await updateSettings({ defaultModel: canonicalId });
       }
       await Promise.resolve(onSelect(canonicalId));
+      selectionSucceeded = true;
+    } catch (e: unknown) {
+      setLoadError(formatLoadError(e, settings));
     } finally {
       if (showLoadState) {
         const remaining = MODEL_ROW_ACTION_MIN_MS - (Date.now() - loadStarted);
@@ -1705,7 +1939,9 @@ export function RemoteModelList({
         if (libraryLayout) {
           await load();
         }
-        onActionComplete?.();
+        if (selectionSucceeded) {
+          onActionComplete?.();
+        }
       }
     }
   }
@@ -1715,7 +1951,7 @@ export function RemoteModelList({
     ? libraryModels.length > 0
     : loadedLibraryModels.length > 0 || installedLibraryModels.length > 0;
   const listIsEmpty = libraryLayout
-    ? !hasInstalledLibraryModels && catalogEntries.length === 0
+    ? !hasInstalledLibraryModels && catalogEntriesWithActive.length === 0
     : sections.length === 0;
 
   const renderModelRow = (item: LMModel) => (
@@ -1743,10 +1979,8 @@ export function RemoteModelList({
           ? () => void performEject(item)
           : undefined
       }
-      onDelete={onDeleteModel ? () => onDeleteModel(item.id) : undefined}
       loadingAction={rowLoadingId === item.id}
       ejecting={activeEjectingId === item.id}
-      deleting={deletingModelId === item.id}
       managementActionsDisabled={managementActionsDisabled}
       modelCatalog={models}
       greyUnselectedIcons={greyUnselectedIcons}
@@ -1758,7 +1992,7 @@ export function RemoteModelList({
   const renderLibrarySections = () => (
     <>
       {listHeader ? <>{listHeader}</> : null}
-      {onOpenLibrary &&
+      {libraryLinkAvailable &&
       listIsEmpty &&
       (effectiveSearch.trim() || modalityFilter !== "all") ? (
         <View style={styles.pickerEmpty}>
@@ -1773,7 +2007,7 @@ export function RemoteModelList({
           </Text>
         </View>
       ) : null}
-      {onOpenLibrary &&
+      {libraryLinkAvailable &&
       !hasInstalledLibraryModels &&
       catalogEntries.length === 0 &&
       !effectiveSearch.trim() &&
@@ -1782,13 +2016,15 @@ export function RemoteModelList({
           <Ionicons name="download-outline" size={28} color={colors.textDim} />
           <Text style={styles.emptyTitle}>No models on system</Text>
           <Text style={[styles.centerText, { textAlign: "center", maxWidth: 280 }]}>
-            Download a model from the Model Library to run on your Mac.
+            {embedInParentScroll
+              ? "Download a model from Model Library below to run on your Mac."
+              : "Download a model from the Model Library to run on your Mac."}
           </Text>
         </View>
       ) : null}
       {browseOnly && libraryModels.length > 0 ? (
         <View style={librarySectionStyles.sectionBlock}>
-          <Text style={librarySectionStyles.sectionTitle}>Installed on system</Text>
+          <Text style={librarySectionStyles.sectionTitle}>Installed on Mac</Text>
           {visibleLibraryModels.map((item) => (
             <AnimatedLibraryRow key={item.id} rowKey={item.id}>
               {renderModelRow(item)}
@@ -1804,7 +2040,7 @@ export function RemoteModelList({
           ) : null}
         </View>
       ) : null}
-      {!browseOnly && loadedLibraryModels.length > 0 ? (
+      {!browseOnly && !hideLoadedSection && loadedLibraryModels.length > 0 ? (
         <View style={librarySectionStyles.sectionBlock}>
           <Text style={librarySectionStyles.sectionTitle}>Loaded in memory</Text>
           <SectionHintLines colors={colors} line="Swipe left to eject" />
@@ -1822,7 +2058,7 @@ export function RemoteModelList({
             loadedLibraryModels.length > 0 ? librarySectionStyles.sectionSpaced : undefined,
           ]}
         >
-          <Text style={librarySectionStyles.sectionTitle}>Installed on system</Text>
+          <Text style={librarySectionStyles.sectionTitle}>Installed on Mac</Text>
           <SectionHintLines colors={colors} line="Swipe right to load" />
           {installedLibraryModels.map((item) => (
             <AnimatedLibraryRow key={item.id} rowKey={item.id}>
@@ -1831,38 +2067,46 @@ export function RemoteModelList({
           ))}
         </View>
       ) : null}
-      {onOpenLibrary && catalogEntries.length > 0 ? (
+      {onOpenLibrary && !hideCatalog && catalogEntriesWithActive.length > 0 ? (
         <View
           style={[
             librarySectionStyles.sectionBlock,
             hasInstalledLibraryModels ? librarySectionStyles.sectionSpaced : undefined,
           ]}
         >
-          <Text style={librarySectionStyles.sectionTitle}>Quick download</Text>
-          <SectionHintLines colors={colors} line="Tap download to open Model Library" />
-          {catalogEntries.map((entry) => (
-            <LibraryCatalogRow
-              key={entry.id}
-              platform={remotePlatform}
-              modelId={entry.id}
-              provider={entry.publisher}
-              name={resolveRemoteLibraryDisplayName(entry)}
-              trait={
-                entry.badge
-                  ? { label: entry.badge, color: entry.badgeColor }
-                  : null
-              }
-              statItems={getRemoteLibraryEntryStatItems(entry)}
-              onDownload={onOpenLibrary}
-              rowStyles={rowStyles}
-              colors={colors}
-              iconMonochrome={greyUnselectedIcons}
-              catalogSource={resolveEntryCatalogSource(entry)}
-            />
-          ))}
+          <Text style={librarySectionStyles.sectionTitle}>Top models</Text>
+          <SectionHintLines colors={colors} line="Tap download to install on your system" />
+          {catalogEntriesWithActive.map((entry) => {
+            const active = isCatalogDownloadActive(entry.id);
+            return (
+              <LibraryCatalogRow
+                key={entry.id}
+                platform={remotePlatform}
+                modelId={entry.id}
+                provider={entry.publisher}
+                name={resolveRemoteLibraryDisplayName(entry)}
+                trait={
+                  entry.badge
+                    ? { label: entry.badge, color: entry.badgeColor }
+                    : null
+                }
+                statItems={getRemoteLibraryEntryStatItems(entry)}
+                onDownload={() => handleCatalogDownload(entry)}
+                disabled={catalogDownloadsBlocked}
+                downloadPhase={active ? "downloading" : "idle"}
+                progress={catalogDownloads[entry.id]?.progress ?? null}
+                downloadError={catalogDownloadErrors[entry.id] ?? null}
+                onClearError={() => clearCatalogDownloadError(entry.id)}
+                rowStyles={rowStyles}
+                colors={colors}
+                iconMonochrome={greyUnselectedIcons}
+                catalogSource={resolveEntryCatalogSource(entry)}
+              />
+            );
+          })}
         </View>
       ) : null}
-      {onOpenLibrary ? (
+      {onOpenLibrary && !embedInParentScroll ? (
         <Pressable
           style={({ pressed }) => [
             styles.openLibraryBtn,
@@ -1903,9 +2147,11 @@ export function RemoteModelList({
     );
   };
 
-  if (loading) {
+  const centerStyle = embedInParentScroll ? styles.embeddedCenter : styles.center;
+
+  if (loading && models.length === 0) {
     return (
-      <View style={styles.center}>
+      <View style={centerStyle}>
         <ActivityIndicator size="large" color={colors.primary} />
         <Text style={styles.centerText}>Connecting to LM Studio…</Text>
       </View>
@@ -1914,20 +2160,27 @@ export function RemoteModelList({
 
   if (error) {
     return (
-      <View style={styles.center}>
+      <View style={centerStyle}>
         <ThemedError
           variant="panel"
           message={error}
           kind="network"
           title="Can't reach LM Studio"
+          hint={
+            onOpenSettings
+              ? "Check your Mac connection in Settings. We'll keep trying in the background."
+              : "Confirm LM Studio is running and on the same network."
+          }
           onDismiss={() => setError(null)}
-          onRetry={load}
+          onRetry={onOpenSettings}
+          retryLabel="Open Settings"
+          actionIcon="settings-outline"
         />
       </View>
     );
   }
 
-  if (models.length === 0 && !(libraryLayout && onOpenLibrary)) {
+  if (models.length === 0 && !(libraryLayout && libraryLinkAvailable)) {
     if (listHeader) {
       return (
         <ScrollView
@@ -1944,7 +2197,9 @@ export function RemoteModelList({
             </View>
             <Text style={styles.emptyTitle}>No models installed</Text>
             <Text style={[styles.centerText, { textAlign: "center" }]}>
-              Download a model below, then load it in LM Studio if needed.
+              {embedInParentScroll
+                ? "Open Model Library below to download a model, then load it in LM Studio if needed."
+                : "Download a model below, then load it in LM Studio if needed."}
             </Text>
             <Pressable onPress={load} style={styles.retryBtn}>
               <Ionicons name="refresh" size={15} color={colors.primaryLight} />
@@ -1973,8 +2228,20 @@ export function RemoteModelList({
     );
   }
 
+  const listBodyPadding = {
+    paddingHorizontal: listHorizontalPadding,
+    paddingBottom: embedInParentScroll ? 0 : bottomInset + 24,
+  };
+
+  const libraryScrollBody = (
+    <>
+      {renderLibrarySections()}
+      {listFooterContent()}
+    </>
+  );
+
   return (
-    <View style={styles.listRoot}>
+    <View style={embedInParentScroll ? styles.listEmbeddedRoot : styles.listRoot}>
       {!hideSearch && (
         <View style={styles.searchWrap}>
           <Ionicons name="search" size={16} color={colors.textDim} />
@@ -2004,7 +2271,7 @@ export function RemoteModelList({
         />
       ) : null}
 
-      {listIsEmpty && !(libraryLayout && onOpenLibrary) ? (
+      {listIsEmpty && !(libraryLayout && libraryLinkAvailable) ? (
         listHeader ? (
           <ScrollView
             style={styles.listScroll}
@@ -2021,7 +2288,9 @@ export function RemoteModelList({
                   ? `No results for "${effectiveSearch}"`
                   : modalityFilter !== "all"
                     ? `No ${capabilityFilterLabel(modalityFilter) || "matching"} models match your filters.`
-                    : "No models installed yet — download one below."}
+                    : embedInParentScroll
+                      ? "No models installed yet — download one in Model Library below."
+                      : "No models installed yet — download one below."}
               </Text>
             </View>
             {listFooter}
@@ -2038,18 +2307,20 @@ export function RemoteModelList({
           </View>
         )
       ) : libraryLayout ? (
-        <ScrollView
-          style={styles.listScroll}
-          contentContainerStyle={{
-            paddingHorizontal: listHorizontalPadding,
-            paddingBottom: bottomInset + 24,
-          }}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {renderLibrarySections()}
-          {listFooterContent()}
-        </ScrollView>
+        embedInParentScroll ? (
+          <View style={[styles.listEmbeddedContent, listBodyPadding]}>
+            {libraryScrollBody}
+          </View>
+        ) : (
+          <ScrollView
+            style={styles.listScroll}
+            contentContainerStyle={listBodyPadding}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {libraryScrollBody}
+          </ScrollView>
+        )
       ) : (
         <GestureSectionList
           style={styles.listScroll}
@@ -2071,6 +2342,7 @@ export function RemoteModelList({
           ListFooterComponent={listFooterContent}
         />
       )}
+
     </View>
   );
 }
@@ -2107,7 +2379,7 @@ export function RemoteModelsBrowser({
       presentationStyle="pageSheet"
       onRequestClose={onClose}
     >
-      <View style={[modalStyles.pageContainer, { paddingTop: insets.top }]}>
+      <View style={[modalStyles.pageContainer, { paddingTop: modalPageTopPadding(insets.top) }]}>
         <View style={modalStyles.pageHandleWrap}>
           <View style={modalStyles.pageHandle} />
         </View>
@@ -2131,6 +2403,7 @@ export function RemoteModelsBrowser({
           persistDefault={shouldPersistDefault}
           bottomInset={insets.bottom}
           browseMode
+          libraryLayout
           loadOnSelect
           useSettingsDefault
         />
@@ -2152,301 +2425,3 @@ export default function ModelPicker(props: Props) {
   return <RemoteModelsBrowser {...props} title="Browse Models" />;
 }
 
-function createListStyles(colors: ThemeColors) {
-  return StyleSheet.create({
-    listRoot: {
-      flex: 1,
-      width: "100%",
-      alignSelf: "stretch",
-    },
-    listScroll: {
-      flex: 1,
-    },
-    searchWrap: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 8,
-      marginHorizontal: 16,
-      marginTop: 8,
-      marginBottom: 12,
-      paddingHorizontal: 14,
-      paddingVertical: 11,
-      backgroundColor: colors.surface,
-      borderRadius: radii.pill,
-      borderWidth: 1,
-      borderColor: colors.border,
-    },
-    searchInput: {
-      flex: 1,
-      color: colors.inputText,
-      fontSize: 15,
-      padding: 0,
-    },
-    center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 32 },
-    emptyIcon: {
-      width: 64,
-      height: 64,
-      borderRadius: 20,
-      backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.border,
-      alignItems: "center",
-      justifyContent: "center",
-      marginBottom: 16,
-    },
-    emptyTitle: { color: colors.text, fontSize: 17, fontWeight: "600", marginBottom: 8 },
-    centerText: { color: colors.textMuted, fontSize: 14, lineHeight: 20 },
-    retryBtn: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 6,
-      marginTop: 20,
-      backgroundColor: colors.primaryGlow,
-      paddingHorizontal: 20,
-      paddingVertical: 11,
-      borderRadius: radii.md,
-      borderWidth: 1,
-      borderColor: colors.primaryBorder,
-    },
-    retryText: { color: colors.primaryLight, fontWeight: "600", fontSize: 14 },
-    toggleWrap: { paddingTop: 6, paddingBottom: 2 },
-    toggleBtn: {
-      marginHorizontal: 0,
-      marginBottom: 12,
-      borderRadius: radii.md,
-      borderWidth: 1,
-      borderColor: colors.border,
-      backgroundColor: colors.surface,
-      paddingHorizontal: 16,
-      paddingVertical: 12,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    toggleBtnPressed: { opacity: 0.85 },
-    toggleBtnText: { color: colors.textMuted, fontWeight: "700", fontSize: 13 },
-    pickerEmpty: {
-      alignItems: "center",
-      justifyContent: "center",
-      paddingVertical: 32,
-      paddingHorizontal: 16,
-      gap: 8,
-      marginBottom: 8,
-    },
-    openLibraryBtn: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "center",
-      gap: 8,
-      marginTop: 12,
-      paddingVertical: 14,
-      borderRadius: radii.md,
-      borderWidth: 1,
-      borderColor: colors.border,
-      backgroundColor: colors.surface,
-    },
-    openLibraryBtnPressed: { opacity: 0.75 },
-    openLibraryBtnText: { color: colors.textMuted, fontSize: 14, fontWeight: "600" },
-  });
-}
-
-function createRowStyles(colors: ThemeColors) {
-  return StyleSheet.create({
-    wrap: {
-      marginBottom: 2,
-    },
-    container: {
-      flexDirection: "row",
-      alignItems: "flex-start",
-      gap: 12,
-      paddingVertical: 10,
-      paddingHorizontal: 12,
-    },
-    selected: {
-      backgroundColor: colors.primaryGlow,
-      borderRadius: radii.sm,
-    },
-    loading: { opacity: 0.55 },
-    pressed: { opacity: 0.75 },
-    mainPress: {
-      flex: 1,
-      flexDirection: "row",
-      alignItems: "flex-start",
-      gap: 12,
-      minWidth: 0,
-    },
-    rowActions: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 4,
-      marginTop: 2,
-      flexShrink: 0,
-    },
-    actionBtn: {
-      width: 32,
-      height: 32,
-      alignItems: "center",
-      justifyContent: "center",
-      borderRadius: radii.sm,
-    },
-    actionBtnDisabled: { opacity: 0.45 },
-    actionBtnPressed: { opacity: 0.7 },
-    modelIcon: {
-      width: 44,
-      height: 44,
-      borderRadius: 10,
-      alignItems: "center",
-      justifyContent: "center",
-      flexShrink: 0,
-      marginTop: 1,
-    },
-    left: { flex: 1, minWidth: 0 },
-    titleRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      flexWrap: "wrap",
-      gap: 6,
-      marginBottom: 4,
-    },
-    name: { color: colors.text, fontSize: 17, fontWeight: "700", lineHeight: 22, flexShrink: 1 },
-    nameSelected: { color: colors.primaryLight },
-    stats: { color: colors.textMuted, fontSize: 11, lineHeight: 15 },
-    loadLine: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 8,
-      marginLeft: 56,
-      marginTop: 2,
-      marginBottom: 6,
-      paddingRight: 4,
-    },
-    loadLineText: {
-      flex: 1,
-      minWidth: 0,
-      color: colors.primaryLight,
-      fontSize: 12,
-      fontWeight: "500",
-    },
-    loadLineError: {
-      marginLeft: 56,
-      marginTop: 2,
-      marginBottom: 6,
-      paddingRight: 4,
-      color: colors.error,
-      fontSize: 12,
-    },
-    libraryWrap: {
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: colors.border,
-    },
-    libraryRow: {
-      position: "relative",
-      overflow: "hidden",
-      paddingVertical: 10,
-      paddingHorizontal: 12,
-    },
-    libraryRowContent: {
-      flex: 1,
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 10,
-      zIndex: 1,
-    },
-    libraryRowSelected: {
-      backgroundColor: colors.primaryGlow,
-      borderRadius: radii.sm,
-    },
-    libraryIcon: {
-      width: 44,
-      height: 44,
-      alignItems: "center",
-      justifyContent: "center",
-      flexShrink: 0,
-    },
-    libraryBody: { flex: 1, minWidth: 0 },
-    libraryName: {
-      color: colors.text,
-      fontSize: 17,
-      fontWeight: "700",
-      lineHeight: 22,
-      flexShrink: 1,
-    },
-    libraryLoadLine: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 8,
-      marginLeft: 54,
-      marginTop: -4,
-      marginBottom: 6,
-      paddingRight: 4,
-    },
-    libraryLoadError: {
-      marginLeft: 54,
-      marginTop: -4,
-      marginBottom: 6,
-      paddingRight: 4,
-      color: colors.error,
-      fontSize: 12,
-    },
-    catalogRow: {
-      flexDirection: "row",
-      alignItems: "flex-start",
-      gap: 12,
-      paddingVertical: 10,
-      marginBottom: 2,
-    },
-    catalogIcon: {
-      width: 44,
-      height: 44,
-      alignItems: "center",
-      justifyContent: "center",
-      flexShrink: 0,
-      marginTop: 1,
-    },
-    catalogBody: { flex: 1, minWidth: 0 },
-    catalogDownloadBtn: {
-      width: 36,
-      height: 36,
-      alignItems: "center",
-      justifyContent: "center",
-      borderRadius: 999,
-      backgroundColor: colors.primaryGlow,
-      borderWidth: 1,
-      borderColor: colors.primaryBorder,
-      marginTop: 2,
-      flexShrink: 0,
-    },
-    catalogDownloadBtnDisabled: { opacity: 0.6 },
-    catalogDownloadBtnPressed: { opacity: 0.8 },
-  });
-}
-
-function createLibrarySectionStyles(colors: ThemeColors) {
-  return StyleSheet.create({
-    sectionBlock: { marginBottom: 8 },
-    sectionSpaced: { marginTop: 8 },
-    sectionTitle: createSectionSubtitleStyle(colors),
-  });
-}
-
-function createSectionStyles(colors: ThemeColors) {
-  return StyleSheet.create({
-    container: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 10,
-      paddingTop: 14,
-      paddingBottom: 8,
-    },
-    title: {
-      color: colors.textMuted,
-      fontSize: 11,
-      fontWeight: "700",
-      letterSpacing: 0.8,
-      textTransform: "uppercase",
-    },
-    line: {
-      flex: 1,
-      height: 1,
-    },
-  });
-}

@@ -12,6 +12,7 @@ import {
   Animated,
   Easing,
   Image,
+  Keyboard,
   Platform,
   Pressable,
   ScrollView,
@@ -33,10 +34,31 @@ import { ModelCapabilityIcons } from "../../components/ModelCapabilityIcons";
 import ThemedError from "../../components/ThemedError";
 import { buildOnDeviceChatMessages } from "../../lib/chat-request";
 import {
+  buildRemoteEnsureKey,
+  shouldSkipRemoteModelEnsure,
+} from "../../lib/chat-model-ensure";
+import {
+  appendModelChangeMarker,
+  inferChatMode,
+} from "../../lib/chat-mode";
+import {
+  findRecentChatForModel,
+  resolveChatRouteAfterMissingId,
+} from "../../lib/chat-navigation";
+import {
+  defaultLocalModelKey,
+  resolveNewChatModelTarget,
+} from "../../lib/new-chat-init";
+import {
   clearRemoteModelSelection,
   formatLoadError,
   fetchModels,
+  isModelInMemory,
+  isRemoteModelLoaded,
   loadRemoteModelOnSystem,
+  resolveManagementApiKey,
+  resolveModelControlUrl,
+  resolveNewChatRemoteModel,
   streamChat,
 } from "../../lib/api";
 import {
@@ -52,10 +74,6 @@ import {
   IS_EXPO_GO,
   clearOnDeviceModelSelection,
   getLocalModelByKey,
-  getLoadedOnDeviceModelKey,
-  isModelDownloaded,
-  LOCAL_MODEL_CATALOG,
-  LocalModelInfo,
   localModelModalities,
   localModelSupportsThinking,
   localModelSupportsVideo,
@@ -65,8 +83,13 @@ import {
 } from "../../lib/local-models";
 import { useRafStringBuffer } from "../../lib/raf-string-buffer";
 import { generateId, generateTitle } from "../../lib/storage";
-import { createScreenHeaderTitleStyle } from "../../lib/typography";
-import { ChatColors, getSettingsPalette, ThemeColors, useTheme } from "../../lib/theme";
+import { getSettingsPalette, ThemeColors, useTheme } from "../../lib/theme";
+import {
+  composerFieldStyles,
+  createEmptyHeroStyles,
+  createOdStyles,
+  createMainChatStyles,
+} from "../../components/chat/chatScreenStyles";
 import {
   composerDockBottom,
   footerBottomPadding,
@@ -106,6 +129,11 @@ interface Attachment {
 
 const MAX_CHAT_ATTACHMENTS = 5;
 
+const MODEL_PICKER_PROMPT_ERRORS = [
+  "Select a model first — tap the model name below.",
+  "Select an on-device model first.",
+];
+
 function attachmentLimitMessage(): string {
   return `You can attach up to ${MAX_CHAT_ATTACHMENTS} files at a time. Remove one to add more.`;
 }
@@ -139,9 +167,6 @@ const composerBlurProps =
   Platform.OS === "android"
     ? ({ experimentalBlurMethod: "dimezisBlurView" } as const)
     : {};
-
-const STAGE_TILE_SIZE = 64;
-const STAGE_STRIP_TOP_BLEED = 18;
 
 function themeBgWithAlpha(bg: string, alpha: number): string {
   const hex = bg.replace("#", "");
@@ -183,21 +208,6 @@ function ComposerFieldShell({
   );
 }
 
-const composerFieldStyles = StyleSheet.create({
-  shell: {
-    flex: 1,
-    minWidth: 0,
-    zIndex: 1,
-    borderRadius: 20,
-    overflow: "hidden",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "rgba(128,128,128,0.22)",
-  },
-  content: {
-    minHeight: 40,
-    justifyContent: "center",
-  },
-});
 
 function AttachMenuPopover({
   isDark,
@@ -376,74 +386,18 @@ function getLocalModelLabelByKey(key: string | null): string {
   return getLocalModelByKey(key)?.name ?? key;
 }
 
-function defaultLocalModelKey(settingsKey: string | undefined): string | null {
-  const info = getLocalModelByKey(settingsKey ?? null);
-  if (!info || !isModelDownloaded(info.filename)) return null;
-  return info.key;
-}
-
-function preferredLocalKeyForNewChat(
-  localModelParam: string | undefined,
-  settingsKey: string | undefined
-): string | null {
-  if (localModelParam) {
-    const fromParam = defaultLocalModelKey(localModelParam);
-    if (fromParam) return fromParam;
+async function waitForConversationRef(
+  read: () => Conversation | null,
+  opts?: { attempts?: number; intervalMs?: number }
+): Promise<Conversation | null> {
+  const attempts = opts?.attempts ?? 40;
+  const intervalMs = opts?.intervalMs ?? 50;
+  for (let i = 0; i < attempts; i++) {
+    const current = read();
+    if (current) return current;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
-  const fromSettings = defaultLocalModelKey(settingsKey);
-  if (fromSettings) return fromSettings;
-  const loaded = getLoadedOnDeviceModelKey();
-  if (!loaded) return null;
-  return defaultLocalModelKey(loaded);
-}
-
-function inferChatMode(conv: Conversation): { mode: ChatMode; localKey: string | null } {
-  if (conv.localModelKey) {
-    return { mode: "local", localKey: conv.localModelKey };
-  }
-
-  const lastMarker = [...conv.messages]
-    .reverse()
-    .find((m) => m.type === "model_change");
-
-  if (lastMarker?.modelMode === "local") {
-    const key =
-      LOCAL_MODEL_CATALOG.find((m) => m.name === lastMarker.modelLabel)?.key ?? null;
-    return { mode: "local", localKey: key };
-  }
-
-  if (lastMarker?.modelMode === "remote") {
-    return { mode: "remote", localKey: null };
-  }
-
-  return { mode: "remote", localKey: null };
-}
-
-function appendModelChangeMarker(
-  conversation: Conversation,
-  label: string,
-  mode: ChatMode
-): Conversation {
-  const lastMarker = [...conversation.messages]
-    .reverse()
-    .find((m) => m.type === "model_change");
-  if (lastMarker?.modelLabel === label && lastMarker?.modelMode === mode) {
-    return conversation;
-  }
-  const marker: Message = {
-    id: generateId(),
-    type: "model_change",
-    role: "system",
-    content: label,
-    modelLabel: label,
-    modelMode: mode,
-    createdAt: Date.now(),
-  };
-  return {
-    ...conversation,
-    messages: [...conversation.messages, marker],
-    updatedAt: Date.now(),
-  };
+  return read();
 }
 
 const HERO_BADGE_SIZE = 54;
@@ -601,51 +555,6 @@ function EmptyModelHero({
   );
 }
 
-function createEmptyHeroStyles() {
-  return StyleSheet.create({
-    container: {
-      flex: 1,
-      alignItems: "center",
-      justifyContent: "center",
-      paddingHorizontal: 40,
-      gap: 18,
-    },
-    pressed: {
-      opacity: 0.78,
-    },
-    nameWrap: {
-      alignSelf: "center",
-      alignItems: "center",
-      maxWidth: "100%",
-    },
-    nameMeasure: {
-      alignItems: "center",
-    },
-    name: {
-      fontSize: 28,
-      fontWeight: "600",
-      textAlign: "center",
-      letterSpacing: -0.4,
-    },
-    nameSizer: {
-      opacity: 0,
-    },
-    nameMask: {
-      color: "#000000",
-      backgroundColor: "transparent",
-    },
-    masked: {
-      position: "absolute",
-      top: 0,
-    },
-    shineSweep: {
-      position: "absolute",
-      top: 0,
-      bottom: 0,
-      left: 0,
-    },
-  });
-}
 
 function OnDeviceStatusBar({
   llm,
@@ -729,40 +638,6 @@ function OnDeviceStatusBar({
   return null;
 }
 
-function createOdStyles(colors: ThemeColors) {
-  return StyleSheet.create({
-    bar: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 6,
-      marginHorizontal: 16,
-      marginTop: 6,
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      backgroundColor: colors.surface,
-      borderRadius: 8,
-      borderWidth: 1,
-      borderColor: colors.border,
-    },
-    barCol: {
-      marginHorizontal: 16,
-      marginTop: 6,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
-      backgroundColor: colors.surface,
-      borderRadius: 8,
-      borderWidth: 1,
-      borderColor: colors.border,
-      gap: 6,
-    },
-    barRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-    text: { color: colors.textDim, fontSize: 11, flex: 1 },
-    ctx: { color: colors.placeholder, fontSize: 10 },
-    dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primaryLight },
-    progressTrack: { height: 2, backgroundColor: colors.borderStrong, borderRadius: 1, overflow: "hidden" },
-    progressFill: { height: 2, backgroundColor: colors.primary, borderRadius: 1 },
-  });
-}
 
 // ─── Chat screen ──────────────────────────────────────────────────────────────
 
@@ -786,7 +661,7 @@ export default function ChatScreen() {
   const [composerChromeHeight, setComposerChromeHeight] = useState(COMPOSER_DOCK_HEIGHT_ESTIMATE);
   const listBottomInset = composerChromeHeight + composerBottom;
   const emptyHeroBottomPad = composerChromeHeight + composerBottom;
-  const { settings, updateSettings, account } = useSettings();
+  const { settings, updateSettings, account, isLoading } = useSettings();
   const {
     activeConversation,
     setActiveConversation,
@@ -822,6 +697,22 @@ export default function ChatScreen() {
   // Attachments
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
+
+  const openModelPicker = useCallback(() => {
+    Keyboard.dismiss();
+    setShowAttachMenu(false);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setShowModelPicker(true);
+  }, []);
+
+  const closeModelPicker = useCallback(() => {
+    setShowModelPicker(false);
+    setError((prev) => {
+      if (!prev) return prev;
+      if (MODEL_PICKER_PROMPT_ERRORS.includes(prev)) return null;
+      return prev;
+    });
+  }, []);
   const attachBtnRotate = useRef(new Animated.Value(0)).current;
   const [remoteModelCatalog, setRemoteModelCatalog] = useState<LMModel[]>([]);
 
@@ -845,8 +736,10 @@ export default function ChatScreen() {
       setRemoteModelCatalog([]);
       return;
     }
+    const catalogUrl = resolveModelControlUrl(settings) ?? settings.baseUrl;
+    const catalogKey = resolveManagementApiKey(settings, account);
     let cancelled = false;
-    fetchModels(settings.baseUrl, settings.apiKey)
+    fetchModels(catalogUrl, catalogKey)
       .then((models) => {
         if (!cancelled) setRemoteModelCatalog(models);
       })
@@ -856,7 +749,72 @@ export default function ChatScreen() {
     return () => {
       cancelled = true;
     };
-  }, [chatMode, settings.baseUrl, settings.apiKey, conversation?.model]);
+  }, [chatMode, settings, account, conversation?.model]);
+
+  const remoteModelEnsureKeyRef = useRef<string | null>(null);
+  const newChatInitGenerationRef = useRef(0);
+  const promotingNewChatRef = useRef(false);
+  const localGenerationChatIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (chatMode !== "remote") {
+      remoteModelEnsureKeyRef.current = null;
+      return;
+    }
+    const modelId = conversation?.model?.trim();
+    if (!modelId || !settings.baseUrl?.trim()) {
+      remoteModelEnsureKeyRef.current = null;
+      return;
+    }
+
+    const ensureKey = buildRemoteEnsureKey(conversation?.id ?? "", modelId);
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const controlUrl = resolveModelControlUrl(settings);
+        if (!controlUrl) return;
+
+        const mgmtKey = resolveManagementApiKey(settings, account);
+        const models = await fetchModels(controlUrl, mgmtKey);
+        if (cancelled) return;
+
+        setRemoteModelCatalog(models);
+        if (shouldSkipRemoteModelEnsure(models, modelId, remoteModelEnsureKeyRef.current, ensureKey)) {
+          return;
+        }
+
+        const row = models.find((m) => isSameModelId(m.id, modelId));
+        if (row && isModelInMemory(row)) {
+          remoteModelEnsureKeyRef.current = ensureKey;
+          return;
+        }
+
+        remoteModelEnsureKeyRef.current = null;
+        await loadRemoteModelOnSystem(settings, modelId, {
+          previousModelId: modelId,
+          accountToken: account?.token,
+        });
+        if (cancelled) return;
+
+        remoteModelEnsureKeyRef.current = ensureKey;
+        const refreshed = await fetchModels(controlUrl, mgmtKey);
+        if (!cancelled) setRemoteModelCatalog(refreshed);
+      } catch (e: unknown) {
+        if (!cancelled) setError(formatLoadError(e, settings));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    chatMode,
+    conversation?.id,
+    conversation?.model,
+    settings,
+    account,
+  ]);
 
   useEffect(() => {
     if (chatMode !== "remote" || !systemPromptText?.trim() || showModelPicker) {
@@ -900,6 +858,7 @@ export default function ChatScreen() {
   const streamStartRef = useRef<number>(0);
   const firstTokenRef = useRef<number>(0);
   const tokenCountRef = useRef<number>(0);
+  const lastStatsAtRef = useRef<number>(0);
   const [liveStats, setLiveStats] = useState<{
     tokensPerSec: number;
     totalTokens: number;
@@ -913,58 +872,73 @@ export default function ChatScreen() {
   // On-device LLM
   const onDeviceLLM = useOnDeviceLLM(localModelKey, chatMode === "local");
 
-  // Sync on-device streaming response to UI
+  useEffect(() => {
+    if (chatMode !== "local") {
+      localGenerationChatIdRef.current = null;
+      return;
+    }
+    if (onDeviceLLM.isGenerating) {
+      localGenerationChatIdRef.current = conversationRef.current?.id ?? null;
+    }
+  }, [chatMode, onDeviceLLM.isGenerating]);
+
   useEffect(() => {
     if (chatMode !== "local") return;
+    const targetId = localGenerationChatIdRef.current;
+    if (!targetId || conversationRef.current?.id !== targetId) return;
     setStreamingContent(onDeviceLLM.response);
   }, [onDeviceLLM.response, chatMode]);
 
-  // When on-device generation ends, save the assistant message
   const prevIsGeneratingRef = useRef(false);
   useEffect(() => {
     if (chatMode !== "local") return;
     const wasGenerating = prevIsGeneratingRef.current;
     prevIsGeneratingRef.current = onDeviceLLM.isGenerating;
 
-    if (wasGenerating && !onDeviceLLM.isGenerating && onDeviceLLM.response && conversation) {
-      const fullText = onDeviceLLM.response;
+    if (!wasGenerating || onDeviceLLM.isGenerating || !onDeviceLLM.response) return;
+
+    const targetId = localGenerationChatIdRef.current;
+    const current = conversationRef.current;
+    if (!targetId || !current || current.id !== targetId) {
       clearStreamingContent();
       setIsStreaming(false);
       setShowTypingIndicator(false);
-
-      const stats: MessageStats = {
-        tokensPerSec: onDeviceLLM.tokensPerSec,
-        totalTokens: onDeviceLLM.contextTokens,
-        timeToFirstTokenMs: 0,
-        totalTimeMs: 0,
-      };
-
-      const assistantMsg: Message = {
-        id: generateId(),
-        role: "assistant",
-        content: fullText,
-        createdAt: Date.now(),
-        stats,
-      };
-      setConversation((prev) => {
-        if (!prev) return prev;
-        const final: Conversation = {
-          ...prev,
-          messages: [...prev.messages, assistantMsg],
-          updatedAt: Date.now(),
-        };
-        updateConversation(final);
-        return final;
-      });
+      localGenerationChatIdRef.current = null;
+      return;
     }
-  }, [onDeviceLLM.isGenerating, onDeviceLLM.response, chatMode, conversation, updateConversation]);
 
-  // Auto-dismiss error banner after 5 seconds
-  useEffect(() => {
-    if (!error) return;
-    const t = setTimeout(() => setError(null), 5000);
-    return () => clearTimeout(t);
-  }, [error]);
+    const fullText = onDeviceLLM.response;
+    clearStreamingContent();
+    setIsStreaming(false);
+    setShowTypingIndicator(false);
+    localGenerationChatIdRef.current = null;
+
+    const stats: MessageStats = {
+      tokensPerSec: onDeviceLLM.tokensPerSec,
+      totalTokens: onDeviceLLM.contextTokens,
+      timeToFirstTokenMs: 0,
+      totalTimeMs: 0,
+    };
+
+    const assistantMsg: Message = {
+      id: generateId(),
+      role: "assistant",
+      content: fullText,
+      createdAt: Date.now(),
+      stats,
+    };
+    const final: Conversation = {
+      ...current,
+      messages: [...current.messages, assistantMsg],
+      updatedAt: Date.now(),
+    };
+    conversationRef.current = final;
+    setConversation(final);
+    void updateConversation(final);
+  }, [onDeviceLLM.isGenerating, onDeviceLLM.response, chatMode, updateConversation, clearStreamingContent]);
+
+  // Errors persist until the user taps the banner to dismiss (or starts a new
+  // action) — auto-hiding made load/streaming failures impossible to read.
 
   // Cleanup: delete empty conversations when leaving the screen
   useEffect(() => {
@@ -981,17 +955,26 @@ export default function ChatScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversation?.id]);
 
+  // Abort any in-flight remote stream when the screen unmounts (e.g. user navigates away).
+  useEffect(() => () => abortRef.current?.abort(), []);
+
   // Load / create conversation — only reset UI when navigating to a different chat.
   // Do not abort streaming when `conversations` updates (e.g. after saving a message).
   useEffect(() => {
     const chatIdChanged = loadedChatIdRef.current !== id;
 
     if (chatIdChanged) {
+      const isNewChatPromotion = promotingNewChatRef.current;
+      promotingNewChatRef.current = false;
       loadedChatIdRef.current = id;
       abortRef.current?.abort();
-      setInput("");
-      setAttachments([]);
-      setError(null);
+      onDeviceLLM.interrupt();
+      localGenerationChatIdRef.current = null;
+      if (!isNewChatPromotion) {
+        setInput("");
+        setAttachments([]);
+        setError(null);
+      }
       clearStreamingContent();
       setIsStreaming(false);
       setShowTypingIndicator(false);
@@ -1000,30 +983,111 @@ export default function ChatScreen() {
     }
 
     if (id === "new") {
-      const conv = createConversation();
-      const preferredLocalKey = preferredLocalKeyForNewChat(
-        localModelParam,
-        settings.defaultLocalModel
-      );
-      const preferredRemoteModel = settings.defaultModel?.trim() || null;
+      const initGeneration = ++newChatInitGenerationRef.current;
+      let cancelled = false;
 
-      if (preferredLocalKey) {
-        conv.localModelKey = preferredLocalKey;
-        setChatMode("local");
-        setLocalModelKey(preferredLocalKey);
-      } else if (preferredRemoteModel) {
-        conv.model = preferredRemoteModel;
+      const finishNewChat = async (
+        conv: Conversation,
+        opts?: { openModelPicker?: boolean }
+      ) => {
+        if (cancelled || initGeneration !== newChatInitGenerationRef.current) return;
+        conversationRef.current = conv;
+        setConversation(conv);
+        setActiveConversation(conv);
+        await updateConversation(conv);
+        promotingNewChatRef.current = true;
+        router.replace(`/chat/${conv.id}` as `/chat/${string}`);
+        if (opts?.openModelPicker) {
+          setShowModelPicker(true);
+        }
+      };
+
+      void (async () => {
+        const conv = createConversation();
+
+        if (localModelParam) {
+          const fromParam = defaultLocalModelKey(localModelParam);
+          if (fromParam) {
+            conv.localModelKey = fromParam;
+            if (cancelled || initGeneration !== newChatInitGenerationRef.current) return;
+            setChatMode("local");
+            setLocalModelKey(fromParam);
+            await finishNewChat(conv);
+            return;
+          }
+          if (cancelled || initGeneration !== newChatInitGenerationRef.current) return;
+          setChatMode("local");
+          setLocalModelKey(null);
+          await finishNewChat(conv, { openModelPicker: true });
+          return;
+        }
+
+        const target = resolveNewChatModelTarget(conversations, settings);
+        if (!target) {
+          if (cancelled || initGeneration !== newChatInitGenerationRef.current) return;
+          setChatMode("remote");
+          setLocalModelKey(null);
+          await finishNewChat(conv, { openModelPicker: true });
+          return;
+        }
+
+        if (target.mode === "local") {
+          const localKey = target.localKey ?? null;
+          if (!localKey || !defaultLocalModelKey(localKey)) {
+            if (cancelled || initGeneration !== newChatInitGenerationRef.current) return;
+            setChatMode("local");
+            setLocalModelKey(null);
+            await finishNewChat(conv, { openModelPicker: true });
+            return;
+          }
+          conv.localModelKey = localKey;
+          if (cancelled || initGeneration !== newChatInitGenerationRef.current) return;
+          setChatMode("local");
+          setLocalModelKey(localKey);
+          await finishNewChat(conv);
+          return;
+        }
+
+        let catalog: LMModel[] = [];
+        if (settings.baseUrl?.trim()) {
+          try {
+            const controlUrl = resolveModelControlUrl(settings) ?? settings.baseUrl;
+            catalog = await fetchModels(controlUrl, resolveManagementApiKey(settings, account));
+            if (cancelled || initGeneration !== newChatInitGenerationRef.current) return;
+            setRemoteModelCatalog(catalog);
+          } catch {
+            catalog = [];
+          }
+        }
+
+        const preferredRemoteId = target.remoteModelId ?? null;
+        const { modelId, pickFrom } = resolveNewChatRemoteModel(catalog, {
+          preferredId: preferredRemoteId,
+        });
+
+        const canAutoPickRemote =
+          !!modelId &&
+          pickFrom.length === 0 &&
+          (!preferredRemoteId || isSameModelId(modelId, preferredRemoteId));
+
+        if (canAutoPickRemote) {
+          conv.model = modelId;
+          if (cancelled || initGeneration !== newChatInitGenerationRef.current) return;
+          setChatMode("remote");
+          setLocalModelKey(null);
+          await finishNewChat(conv);
+          return;
+        }
+
+        if (cancelled || initGeneration !== newChatInitGenerationRef.current) return;
         setChatMode("remote");
         setLocalModelKey(null);
-      } else {
-        setChatMode("remote");
-        setLocalModelKey(null);
-      }
-      conversationRef.current = conv;
-      setConversation(conv);
-      setActiveConversation(conv);
-      router.replace(`/chat/${conv.id}` as `/chat/${string}`);
-      return;
+        await finishNewChat(conv, { openModelPicker: true });
+      })();
+
+      return () => {
+        cancelled = true;
+      };
     }
 
     const found = conversations.find((c) => c.id === id);
@@ -1039,19 +1103,31 @@ export default function ChatScreen() {
       return;
     }
 
-    if (!found && id !== "new" && conversations.length === 0 && !activeConversation) {
-      const hadPersistedChat = conversation?.messages.some(isChatMessage);
-      if (hadPersistedChat) {
-        router.replace("/chat/new" as `/chat/${string}`);
+    if (!found && id !== "new") {
+      if (isLoading) return;
+
+      const inMemoryConv =
+        (conversationRef.current?.id === id ? conversationRef.current : null) ??
+        (activeConversation?.id === id ? activeConversation : null);
+
+      if (inMemoryConv || promotingNewChatRef.current) {
+        if (inMemoryConv) {
+          conversationRef.current = inMemoryConv;
+          if (chatIdChanged || conversation?.id !== id) {
+            const { mode, localKey } = inferChatMode(inMemoryConv);
+            setChatMode(mode);
+            setLocalModelKey(localKey);
+            setConversation(inMemoryConv);
+            setActiveConversation(inMemoryConv);
+          }
+        }
         return;
       }
-    }
 
-    if (activeConversation?.id === id) {
-      conversationRef.current = activeConversation;
-      if (chatIdChanged || conversation?.id !== id) {
-        setConversation(activeConversation);
-      }
+      conversationRef.current = null;
+      setConversation(null);
+      router.replace(resolveChatRouteAfterMissingId(conversations, activeConversation));
+      return;
     }
   }, [
     id,
@@ -1061,9 +1137,11 @@ export default function ChatScreen() {
     activeConversation,
     conversation?.id,
     setActiveConversation,
+    updateConversation,
     router,
-    settings.defaultLocalModel,
-    settings.defaultModel,
+    settings,
+    account,
+    isLoading,
   ]);
 
   const scrollToBottom = useCallback((animated = true) => {
@@ -1096,6 +1174,29 @@ export default function ChatScreen() {
     }, [])
   );
 
+  const resolveConversationForSelection = useCallback(async (): Promise<Conversation | null> => {
+    if (conversationRef.current) return conversationRef.current;
+
+    if (id === "new") {
+      const waited = await waitForConversationRef(() => conversationRef.current);
+      if (waited) return waited;
+    }
+
+    const conv = createConversation();
+    conversationRef.current = conv;
+    setConversation(conv);
+    setActiveConversation(conv);
+    await updateConversation(conv);
+    router.replace(`/chat/${conv.id}` as `/chat/${string}`);
+    return conv;
+  }, [
+    id,
+    createConversation,
+    updateConversation,
+    setActiveConversation,
+    router,
+  ]);
+
   const applyModelSelection = useCallback(
     async (
       mode: ChatMode,
@@ -1105,117 +1206,217 @@ export default function ChatScreen() {
         skipRemoteLoad?: boolean;
       }
     ) => {
-      const currentForCheck = conversationRef.current;
+      try {
+        const currentForCheck = conversationRef.current;
 
-      if (mode === "remote" && opts?.remoteModelId === null) {
-        setError(null);
-        await clearRemoteModelSelection(settings, remoteModelCatalog, account?.token);
-      } else if (
-        mode === "remote" &&
-        opts?.remoteModelId &&
-        chatMode === "remote" &&
-        isSameModelId(currentForCheck?.model, opts.remoteModelId)
-      ) {
-        return;
-      }
-
-      if (mode === "local" && opts?.localKey === null) {
-        await clearOnDeviceModelSelection();
-      } else if (
-        mode === "local" &&
-        opts?.localKey !== undefined &&
-        chatMode === "local" &&
-        opts.localKey === localModelKey
-      ) {
-        return;
-      }
-
-      if (mode === "remote" && opts?.remoteModelId && !opts.skipRemoteLoad) {
-        setError(null);
-        try {
-          await loadRemoteModelOnSystem(settings, opts.remoteModelId, {
-            previousModelId: conversationRef.current?.model,
-            accountToken: account?.token,
-          });
-        } catch (e: unknown) {
-          setError(formatLoadError(e, settings));
+        const switchingModeOnly =
+          mode !== chatMode &&
+          opts?.remoteModelId === undefined &&
+          opts?.localKey === undefined;
+        if (switchingModeOnly) {
           return;
         }
-      }
 
-      if (mode === "remote") {
-        if (opts?.remoteModelId) {
-          await updateSettings({ defaultModel: opts.remoteModelId });
-        } else if (opts?.remoteModelId === null) {
-          await updateSettings({ defaultModel: "" });
+        if (mode === "remote" && opts?.remoteModelId === null) {
+          setError(null);
+          await clearRemoteModelSelection(settings, remoteModelCatalog, account?.token);
+        } else if (
+          mode === "remote" &&
+          opts?.remoteModelId &&
+          chatMode === "remote" &&
+          isSameModelId(currentForCheck?.model, opts.remoteModelId) &&
+          !opts.skipRemoteLoad
+        ) {
+          const loadedRow = remoteModelCatalog.find((m) =>
+            isSameModelId(m.id, opts.remoteModelId)
+          );
+          if (loadedRow && isRemoteModelLoaded(loadedRow)) {
+            return;
+          }
         }
-      } else if (mode === "local") {
-        if (opts?.localKey) {
-          await updateSettings({ defaultLocalModel: opts.localKey });
-        } else if (opts?.localKey === null) {
-          await updateSettings({ defaultLocalModel: "" });
+
+        if (mode === "local" && opts?.localKey === null) {
+          await clearOnDeviceModelSelection();
+        } else if (
+          mode === "local" &&
+          opts?.localKey !== undefined &&
+          chatMode === "local" &&
+          opts.localKey === localModelKey
+        ) {
+          return;
         }
+
+        if (mode === "remote" && opts?.remoteModelId && !opts.skipRemoteLoad) {
+          setError(null);
+          try {
+            await loadRemoteModelOnSystem(settings, opts.remoteModelId, {
+              previousModelId: conversationRef.current?.model,
+              accountToken: account?.token,
+            });
+          } catch (e: unknown) {
+            setError(formatLoadError(e, settings));
+            return;
+          }
+        }
+
+        if (mode === "remote") {
+          if (opts?.remoteModelId) {
+            await updateSettings({ defaultModel: opts.remoteModelId });
+          } else if (opts?.remoteModelId === null) {
+            await updateSettings({ defaultModel: "" });
+          }
+        } else if (mode === "local") {
+          if (opts?.localKey) {
+            await updateSettings({ defaultLocalModel: opts.localKey });
+          } else if (opts?.localKey === null) {
+            await updateSettings({ defaultLocalModel: "" });
+          }
+        }
+
+        if (opts?.localKey !== undefined) {
+          setLocalModelKey(opts.localKey);
+        }
+        if (mode !== chatMode) setChatMode(mode);
+
+        const clearingRemote = mode === "remote" && opts?.remoteModelId === null;
+        const clearingLocal = mode === "local" && opts?.localKey === null;
+        const nextRemoteModelId = clearingRemote
+          ? undefined
+          : opts?.remoteModelId ?? conversationRef.current?.model;
+
+        const dropsImages =
+          clearingRemote ||
+          clearingLocal ||
+          mode === "local" ||
+          (mode === "remote" &&
+            nextRemoteModelId &&
+            !modelSupportsVision(nextRemoteModelId, remoteModelCatalog));
+        if (dropsImages) {
+          setAttachments((prev) => prev.filter((a) => a.type !== "image"));
+        }
+
+        const current = await resolveConversationForSelection();
+        if (!current) return;
+
+        const label =
+          mode === "remote"
+            ? clearingRemote
+              ? "Select Model"
+              : formatRemoteModelLabel(opts?.remoteModelId ?? current.model)
+            : clearingLocal
+              ? "Select model"
+              : getLocalModelLabelByKey(opts?.localKey ?? localModelKey ?? null);
+
+        let next: Conversation = {
+          ...current,
+          updatedAt: Date.now(),
+          ...(mode === "remote"
+            ? clearingRemote
+              ? { model: undefined, localModelKey: undefined }
+              : opts?.remoteModelId
+                ? { model: opts.remoteModelId, localModelKey: undefined }
+                : {}
+            : clearingLocal
+              ? { localModelKey: undefined, model: undefined }
+              : {
+                  localModelKey: opts?.localKey ?? localModelKey ?? undefined,
+                  model: undefined,
+                }),
+        };
+        if (!clearingRemote && !clearingLocal) {
+          next = appendModelChangeMarker(next, label, mode, generateId);
+        }
+        conversationRef.current = next;
+        setConversation(next);
+        await updateConversation(next);
+        scrollToBottom();
+      } catch (e: unknown) {
+        const message = formatLoadError(e, settings);
+        setError(message);
+        throw new Error(message);
       }
-
-      if (opts?.localKey !== undefined) {
-        setLocalModelKey(opts.localKey);
-      }
-      if (mode !== chatMode) setChatMode(mode);
-
-      const clearingRemote = mode === "remote" && opts?.remoteModelId === null;
-      const clearingLocal = mode === "local" && opts?.localKey === null;
-      const nextRemoteModelId = clearingRemote
-        ? undefined
-        : opts?.remoteModelId ?? conversationRef.current?.model;
-
-      const dropsImages =
-        clearingRemote ||
-        clearingLocal ||
-        mode === "local" ||
-        (mode === "remote" &&
-          nextRemoteModelId &&
-          !modelSupportsVision(nextRemoteModelId, remoteModelCatalog));
-      if (dropsImages) {
-        setAttachments((prev) => prev.filter((a) => a.type !== "image"));
-      }
-
-      const current = conversationRef.current;
-      if (!current) return;
-
-      const label =
-        mode === "remote"
-          ? clearingRemote
-            ? "Select Model"
-            : formatRemoteModelLabel(opts?.remoteModelId ?? current.model)
-          : clearingLocal
-            ? "Select model"
-            : getLocalModelLabelByKey(opts?.localKey ?? localModelKey ?? null);
-
-      let next: Conversation = {
-        ...current,
-        updatedAt: Date.now(),
-        ...(mode === "remote"
-          ? clearingRemote
-            ? { model: undefined, localModelKey: undefined }
-            : opts?.remoteModelId
-              ? { model: opts.remoteModelId, localModelKey: undefined }
-              : {}
-          : clearingLocal
-            ? { localModelKey: undefined, model: undefined }
-            : {
-                localModelKey: opts?.localKey ?? localModelKey ?? undefined,
-                model: undefined,
-              }),
-      };
-      if (!clearingRemote && !clearingLocal) {
-        next = appendModelChangeMarker(next, label, mode);
-      }
-      conversationRef.current = next;
-      setConversation(next);
-      await updateConversation(next);
-      scrollToBottom();
     },
-    [chatMode, localModelKey, remoteModelCatalog, settings, account?.token, updateConversation, updateSettings, scrollToBottom]
+    [
+      chatMode,
+      localModelKey,
+      remoteModelCatalog,
+      settings,
+      account?.token,
+      updateConversation,
+      updateSettings,
+      scrollToBottom,
+      resolveConversationForSelection,
+    ]
+  );
+
+  const navigateToChatForLoadedModel = useCallback(
+    async (
+      mode: ChatMode,
+      opts: { remoteModelId?: string; localKey?: string }
+    ) => {
+      try {
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+        const onCurrentChat =
+          mode === "local"
+            ? chatMode === "local" && !!opts.localKey && localModelKey === opts.localKey
+            : chatMode === "remote" &&
+              !!opts.remoteModelId &&
+              isSameModelId(conversationRef.current?.model, opts.remoteModelId);
+
+        if (onCurrentChat) {
+          scrollToBottom(true);
+          return;
+        }
+
+        const recent = findRecentChatForModel(conversations, mode, opts);
+        if (recent) {
+          conversationRef.current = recent;
+          setConversation(recent);
+          setActiveConversation(recent);
+          const { mode: recentMode, localKey } = inferChatMode(recent);
+          setChatMode(recentMode);
+          setLocalModelKey(localKey);
+          router.replace(`/chat/${recent.id}` as `/chat/${string}`);
+          return;
+        }
+
+        const conv = createConversation();
+        if (mode === "local" && opts.localKey) {
+          conv.localModelKey = opts.localKey;
+          setChatMode("local");
+          setLocalModelKey(opts.localKey);
+          await updateSettings({ defaultLocalModel: opts.localKey });
+        } else if (mode === "remote" && opts.remoteModelId) {
+          conv.model = opts.remoteModelId;
+          setChatMode("remote");
+          setLocalModelKey(null);
+          await updateSettings({ defaultModel: opts.remoteModelId });
+        }
+        conversationRef.current = conv;
+        setConversation(conv);
+        await updateConversation(conv);
+        setActiveConversation(conv);
+        router.replace(`/chat/${conv.id}` as `/chat/${string}`);
+      } catch (e: unknown) {
+        const message = formatLoadError(e, settings);
+        setError(message);
+        throw new Error(message);
+      }
+    },
+    [
+      chatMode,
+      localModelKey,
+      conversations,
+      scrollToBottom,
+      setConversation,
+      setActiveConversation,
+      router,
+      createConversation,
+      updateConversation,
+      updateSettings,
+      settings,
+    ]
   );
 
   const streamScrollRafRef = useRef<number | null>(null);
@@ -1444,6 +1645,7 @@ export default function ChatScreen() {
       streamStartRef.current = Date.now();
       firstTokenRef.current = 0;
       tokenCountRef.current = 0;
+      lastStatsAtRef.current = 0;
       setLiveStats(null);
       abortRef.current = new AbortController();
 
@@ -1467,13 +1669,18 @@ export default function ChatScreen() {
               setShowTypingIndicator(false);
               appendStreamingContent(token);
 
-              const elapsed = now - streamStartRef.current;
-              const tps = elapsed > 0 ? tokenCountRef.current / (elapsed / 1000) : 0;
-              setLiveStats({
-                tokensPerSec: tps,
-                totalTokens: tokenCountRef.current,
-                elapsedMs: elapsed,
-              });
+              // Throttle live-stats to ~5/s — the buffered text already drives the
+              // visible stream; a per-token state update just adds re-renders.
+              if (now - lastStatsAtRef.current >= 200) {
+                lastStatsAtRef.current = now;
+                const elapsed = now - streamStartRef.current;
+                const tps = elapsed > 0 ? tokenCountRef.current / (elapsed / 1000) : 0;
+                setLiveStats({
+                  tokensPerSec: tps,
+                  totalTokens: tokenCountRef.current,
+                  elapsedMs: elapsed,
+                });
+              }
             },
             onDone: async (fullText) => {
               flushStreamingContent();
@@ -1626,7 +1833,7 @@ export default function ChatScreen() {
   );
 
   const openNewChat = useCallback(() => {
-    router.push("/chat/new");
+    router.replace("/chat/new");
   }, [router]);
 
   useEffect(() => {
@@ -1659,7 +1866,9 @@ export default function ChatScreen() {
     }
 
     if (chatMode === "remote" && !conv.model?.trim()) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       setError("Select a model first — tap the model name below.");
+      openModelPicker();
       return;
     }
 
@@ -1676,7 +1885,9 @@ export default function ChatScreen() {
         if (onDeviceLLM.isLoading) {
           setError("Model is still loading. Please wait.");
         } else if (!localModelKey) {
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
           setError("Select an on-device model first.");
+          openModelPicker();
         } else {
           setError(onDeviceLLM.error ?? "Model not ready.");
         }
@@ -1762,6 +1973,7 @@ export default function ChatScreen() {
     updateConversation,
     imageAttachmentError,
     generateReplyForConversation,
+    openModelPicker,
   ]);
 
   const stopStreaming = useCallback(() => {
@@ -1980,7 +2192,7 @@ export default function ChatScreen() {
           <View style={{ flex: 1, paddingBottom: emptyHeroBottomPad }}>
             <EmptyModelHero
               label={activeModelLabel}
-              onPress={() => setShowModelPicker(true)}
+              onPress={openModelPicker}
               mode={chatMode}
               baseUrl={settings.baseUrl}
               modelId={chatMode === "remote" ? conversation?.model : undefined}
@@ -2115,7 +2327,7 @@ export default function ChatScreen() {
 
             <View style={styles.inputMetaRow}>
               <Pressable
-                onPress={() => setShowModelPicker(true)}
+                onPress={openModelPicker}
                 style={({ pressed }) => [
                   styles.footerModelPicker,
                   pressed && styles.footerModelPickerPressed,
@@ -2146,11 +2358,11 @@ export default function ChatScreen() {
                     style={styles.footerModelChevron}
                   />
                   <ModelCapabilityIcons
-                    modalities={activeModelCapabilities.modalities}
                     thinking={activeModelCapabilities.thinking}
+                    vision={activeModelCapabilities.vision}
+                    video={activeModelCapabilities.video}
                     colors={colors}
                     highlighted={hasActiveModel}
-                    showUnsupported
                     size={13}
                   />
                 </View>
@@ -2169,17 +2381,26 @@ export default function ChatScreen() {
       </View>
       <ChatModelPicker
         visible={showModelPicker}
-        onClose={() => setShowModelPicker(false)}
+        onClose={closeModelPicker}
         chatMode={chatMode}
-        onModeChange={(mode) => {
-          if (mode !== chatMode) applyModelSelection(mode);
-        }}
+        prefetchedRemoteModels={remoteModelCatalog}
         remoteModelId={conversation?.model}
         onRemoteSelect={async (modelId) => {
-          await applyModelSelection("remote", { remoteModelId: modelId });
+          await applyModelSelection("remote", {
+            remoteModelId: modelId,
+            skipRemoteLoad: true,
+          });
         }}
         localModelKey={localModelKey}
-        onLocalSelect={(key) => applyModelSelection("local", { localKey: key })}
+        onLocalSelect={async (key) => {
+          await applyModelSelection("local", { localKey: key });
+        }}
+        onLoadedRemoteActivate={async (modelId) => {
+          await navigateToChatForLoadedModel("remote", { remoteModelId: modelId });
+        }}
+        onLoadedLocalActivate={async (key) => {
+          await navigateToChatForLoadedModel("local", { localKey: key });
+        }}
         onOpenSettings={openSettings}
         disableLocal={IS_EXPO_GO}
       />
@@ -2190,357 +2411,3 @@ export default function ChatScreen() {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-function createMainChatStyles(colors: ThemeColors, chat: ChatColors, isDark: boolean) {
-  return StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg, overflow: "hidden" },
-  chatBody: { flex: 1, position: "relative" },
-  composerBottomFill: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: colors.bg,
-    zIndex: 9,
-  },
-  composerDock: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    zIndex: 10,
-    backgroundColor: "transparent",
-  },
-  composerDockFront: {
-    zIndex: 12,
-  },
-  attachMenuScrim: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 11,
-    backgroundColor: "transparent",
-  },
-  dotBgLayer: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 0,
-  },
-  dotTopCap: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-  },
-
-  header: {
-    backgroundColor: colors.bg,
-    paddingBottom: 10,
-    paddingHorizontal: 12,
-  },
-  headerTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  headerTitle: createScreenHeaderTitleStyle(colors, "left"),
-  headerActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    flexShrink: 0,
-    gap: 2,
-  },
-  headerIconBtn: { padding: 4, flexShrink: 0 },
-
-  systemBannerReveal: {
-    overflow: "hidden",
-  },
-  systemBanner: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 8,
-    backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  systemBannerIcon: {
-    flexShrink: 0,
-    marginTop: 2,
-  },
-  systemBannerBody: {
-    flex: 1,
-    minWidth: 0,
-    gap: 2,
-  },
-  systemBannerLabel: {
-    color: colors.textDim,
-    fontSize: 10,
-    fontWeight: "700",
-    letterSpacing: 0.4,
-    textTransform: "uppercase",
-  },
-  systemBannerText: {
-    color: colors.textMuted,
-    fontSize: 12,
-    lineHeight: 16,
-  },
-
-  typingWrap: { paddingHorizontal: 16, marginBottom: 8, alignSelf: "flex-start" },
-
-  errorBanner: {
-    marginHorizontal: 16,
-    marginBottom: 8,
-    padding: 12,
-    backgroundColor: colors.errorBg,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.errorBorder,
-    flexDirection: "row",
-    alignItems: "flex-start",
-  },
-  errorLabel: { color: colors.error, fontSize: 11, fontWeight: "700", marginBottom: 3 },
-  errorText: { color: colors.error, fontSize: 13, lineHeight: 18 },
-
-  // ── Staged attachments (transparent top, solid composer bg at bottom) ─────
-  attachmentsBar: {
-    marginTop: -STAGE_STRIP_TOP_BLEED,
-    marginHorizontal: -12,
-    marginBottom: 0,
-    backgroundColor: "transparent",
-    overflow: "visible",
-  },
-  attachmentsBarScroll: {
-    maxHeight: STAGE_TILE_SIZE + STAGE_STRIP_TOP_BLEED + 10,
-  },
-  attachmentsBarContent: {
-    paddingHorizontal: 12,
-    paddingTop: STAGE_STRIP_TOP_BLEED + 4,
-    paddingBottom: 6,
-    gap: 8,
-    alignItems: "center",
-  },
-  stageTile: {
-    width: STAGE_TILE_SIZE,
-    height: STAGE_TILE_SIZE,
-    borderRadius: 10,
-    overflow: "hidden",
-    backgroundColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.55)",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: isDark ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0.65)",
-  },
-  stageTileImage: {
-    width: STAGE_TILE_SIZE,
-    height: STAGE_TILE_SIZE,
-  },
-  stageFileTile: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 4,
-    gap: 4,
-  },
-  stageFileExt: {
-    fontSize: 10,
-    lineHeight: 12,
-    fontWeight: "800",
-    letterSpacing: 0.3,
-    textAlign: "center",
-    maxWidth: STAGE_TILE_SIZE - 8,
-  },
-  stageRemoveBtn: {
-    position: "absolute",
-    top: 4,
-    right: 4,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(0,0,0,0.48)",
-  },
-
-  // ── Input bar ──────────────────────────────────────────────────────────────
-  inputFooter: {
-    backgroundColor: colors.bg,
-  },
-  inputFooterWithAttachments: {
-    backgroundColor: "transparent",
-  },
-  inputBarSurface: {
-    backgroundColor: colors.bg,
-  },
-  inputBar: {
-    paddingHorizontal: 12,
-    paddingTop: 8,
-    paddingBottom: 2,
-  },
-  inputBarWithAttachments: {
-    paddingTop: 0,
-  },
-  inputRow: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    gap: 8,
-    marginBottom: 10,
-  },
-  inputMetaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
-    minWidth: 0,
-    minHeight: 20,
-    paddingTop: 2,
-    paddingBottom: 0,
-    backgroundColor: colors.bg,
-  },
-  footerSolidStrip: {
-    marginHorizontal: -12,
-    backgroundColor: colors.bg,
-  },
-  footerModelPicker: {
-    flexDirection: "row",
-    alignItems: "center",
-    flexShrink: 1,
-    minWidth: 0,
-    gap: 6,
-  },
-  footerModelPickerPressed: { opacity: 0.65 },
-  footerModelName: {
-    flexShrink: 1,
-    minWidth: 0,
-    color: chat.modelAccent,
-    fontSize: 13,
-    fontWeight: "600",
-    lineHeight: 16,
-  },
-  footerModelChevron: {
-    flexShrink: 0,
-    opacity: 0.8,
-  },
-  footerModelTrailing: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    flexShrink: 0,
-  },
-  poweredByRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    flexShrink: 0,
-    gap: 4,
-    opacity: 0.55,
-  },
-  poweredByText: {
-    color: colors.textDim,
-    fontSize: 10,
-    fontWeight: "400",
-    letterSpacing: 0.15,
-  },
-  poweredByBrand: {
-    color: colors.textDim,
-    fontSize: 10,
-    fontWeight: "500",
-    letterSpacing: 0.1,
-  },
-  attachAnchor: {
-    position: "relative",
-    zIndex: 4,
-    elevation: 8,
-    flexShrink: 0,
-  },
-  attachBtn: {
-    width: 40,
-    height: 40,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 20,
-    backgroundColor: chat.inputBg,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "transparent",
-  },
-  attachBtnStaged: {
-    borderColor: isDark ? colors.primaryBorder : "rgba(139,92,246,0.22)",
-  },
-  attachBtnPressed: {
-    opacity: 0.78,
-    transform: [{ scale: 0.96 }],
-  },
-  attachMenuPopover: {
-    position: "absolute",
-    left: 0,
-    bottom: 48,
-    width: 188,
-    borderRadius: 14,
-    overflow: "hidden",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.08)",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: isDark ? 0.42 : 0.16,
-    shadowRadius: 18,
-    elevation: 12,
-    zIndex: 6,
-  },
-  attachMenuItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  attachMenuItemPressed: {
-    backgroundColor: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)",
-  },
-  attachMenuItemText: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: "600",
-    letterSpacing: -0.1,
-  },
-  attachMenuDivider: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.07)",
-    marginHorizontal: 10,
-  },
-  textInput: {
-    color: chat.inputText,
-    fontSize: 15,
-    lineHeight: 20,
-    maxHeight: 64,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-  },
-  sendBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: chat.sendBg,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  sendBtnActive: {
-    backgroundColor: chat.sendBgActive,
-    ...(isDark
-      ? {
-          shadowColor: colors.primary,
-          shadowOffset: { width: 0, height: 0 },
-          shadowOpacity: 0.4,
-          shadowRadius: 10,
-        }
-      : {}),
-  },
-  stopBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.surfaceHover,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  stopIcon: { width: 13, height: 13, borderRadius: 2, backgroundColor: colors.textMuted },
-
-  });
-}

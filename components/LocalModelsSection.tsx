@@ -1,17 +1,17 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
-import { downloadAsync } from "expo-file-system/legacy";
 import { File, Paths } from "expo-file-system";
 import { useRouter } from "expo-router";
+import { useHubNavigation } from "../lib/hub-navigation";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
+  Easing,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
   View,
 } from "react-native";
@@ -25,8 +25,15 @@ import {
 import { useIndeterminateLoadProgress } from "../lib/use-indeterminate-load-progress";
 import SwipeToDeleteRow from "./SwipeToDeleteRow";
 import { AnimatedLibraryRow } from "./LibraryModelSections";
-import SectionHintLines, { createSectionSubtitleStyle } from "./SectionHintLines";
+import SectionHintLines from "./SectionHintLines";
+import CatalogDownloadProgress from "./CatalogDownloadProgress";
+import DownloadIconCancelOverlay from "./DownloadIconCancelOverlay";
+import { useLocalModelDownloads } from "../lib/use-local-model-download";
+import { localModelDownloadStore } from "../lib/local-model-download-store";
 import ThemedConfirmDialog from "./ThemedConfirmDialog";
+import HfModelAccessDialog from "./HfModelAccessDialog";
+import { huggingFaceModelPageUrl } from "../lib/huggingface-gated";
+import * as Linking from "expo-linking";
 import ThemedError from "./ThemedError";
 import ModelModeBadgeIcon from "./ModelModeBadgeIcon";
 import ModelProviderIcon from "./ModelProviderIcon";
@@ -43,8 +50,11 @@ import { extractModelParamLabel, parseModelName } from "../lib/model-name";
 import {
   fetchHuggingFaceModelEntry,
   getCachedHfLibrarySizeLabel,
+  prefetchRemoteLibrarySizes,
 } from "../lib/huggingface-model-search";
+import { searchHuggingFaceLocalModels } from "../lib/huggingface-local-search";
 import { fetchLmStudioArtifactDownloadCount } from "../lib/lmstudio-hub-artifact";
+import { libraryHasMorePages } from "../lib/library-pagination";
 import {
   libraryBrowseItemDetailScore,
   mergeStableLibraryBrowseItems,
@@ -59,21 +69,23 @@ import { matchesLibrarySearch } from "../lib/library-search";
 import type { RemoteLibraryEntry } from "../lib/remote-model-library";
 import {
   getAllCustomLocalModelRecords,
+  buildPendingLocalModelFromGgufUrl,
   registerCustomLocalModel,
   removeCustomLocalModel,
   toLocalModelInfo,
 } from "../lib/custom-local-models";
 import {
   resolveLocalGgufDownloadUrl,
+  tryResolveLocalGgufDownloadUrl,
 } from "../lib/model-download-string";
 import {
   getQuickAccessLocalModels,
   IS_EXPO_GO,
   LOCAL_MODEL_CATALOG,
+  LOCAL_NATIVE_BUILD_MESSAGE,
   localModelIdHaystack,
   LocalModelInfo,
   QUICK_ACCESS_LOCAL_MODEL_KEYS,
-  deleteModelFile,
   ejectOnDeviceModel,
   getLoadedOnDeviceModelKey,
   isModelDownloaded,
@@ -81,8 +93,18 @@ import {
   modelFileSize,
 } from "../lib/local-models";
 import ModelDownloadStringField from "./ModelDownloadStringField";
-import { radii, ThemeColors, useAccentPalette, useTheme } from "../lib/theme";
+import { ThemeColors, useAccentPalette, useTheme } from "../lib/theme";
 import {
+  createStorageStyles,
+  createCardStyles,
+  createBannerStyles,
+  createLocalDetailStyles,
+  createCatalogRowStyles,
+  createInstalledRowStyles,
+  createLocalModelsStyles,
+} from "./LocalModelsSection.styles";
+import {
+  catalogSourceStatItem,
   getModelCapabilityStatItems,
   ModelModalityFilters,
   ModelStatItem,
@@ -95,6 +117,7 @@ import {
   LIBRARY_INSTALLED_PAGE_SIZE,
   LibraryRowSizeLabel,
   LibrarySeeMoreButton,
+  sizeLabelFromStatItems,
   statItemsWithoutSize,
 } from "./ModelPicker";
 import {
@@ -104,7 +127,7 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type ModelStatus = "idle" | "checking" | "downloading" | "ready" | "error";
+type ModelStatus = "idle" | "checking" | "downloading" | "paused" | "ready" | "error";
 
 interface ModelState {
   status: ModelStatus;
@@ -120,6 +143,36 @@ type ModelStateMap = Record<string, ModelState>;
 
 function defaultState(): ModelState {
   return { status: "checking", progress: 0, bytesWritten: 0, totalBytes: 0, speedMBs: 0, etaSecs: 0 };
+}
+
+function resolveLocalDownloadStoreKey(
+  key: string,
+  model: LocalModelInfo | undefined,
+  catalogModels: LocalModelInfo[],
+  readState: (storeKey: string) => ModelState
+): string {
+  const direct = readState(key);
+  if (
+    direct.status === "downloading" ||
+    direct.status === "paused" ||
+    direct.status === "error"
+  ) {
+    return key;
+  }
+  if (!model) return key;
+  for (const entry of catalogModels) {
+    if (entry.key === key) continue;
+    if (entry.filename !== model.filename && entry.downloadUrl !== model.downloadUrl) continue;
+    const alternate = readState(entry.key);
+    if (
+      alternate.status === "downloading" ||
+      alternate.status === "paused" ||
+      alternate.status === "error"
+    ) {
+      return entry.key;
+    }
+  }
+  return key;
 }
 
 function formatStorageBytes(bytes: number): string {
@@ -178,7 +231,12 @@ function resolveLocalModelSizeLabel(
       if (formatted) return formatted;
     }
   }
-  const fromLabel = resolveFileSizeLabel(model.sizeLabel, model.filename, model.key);
+  const fromLabel = resolveFileSizeLabel(
+    model.sizeLabel && model.sizeLabel !== "—" ? model.sizeLabel : undefined,
+    model.filename,
+    model.key,
+    model.name
+  );
   if (fromLabel) return fromLabel;
 
   const param =
@@ -213,6 +271,7 @@ export function getLocalModelStatItems(
         : []),
       { icon: "hardware-chip-outline", label: model.ramLabel },
       { icon: "business-outline", label: model.provider },
+      catalogSourceStatItem("huggingface"),
     ]),
     ...(sizeLabel
       ? [{ icon: "document-outline" as const, label: sizeLabel, role: "size" as const }]
@@ -244,6 +303,8 @@ function ModelStatusIcon({
       return <Ionicons name="phone-portrait-outline" size={22} color={colors.primaryLight} />;
     case "downloading":
       return <ActivityIndicator size="small" color={colors.primaryLight} />;
+    case "paused":
+      return <Ionicons name="pause-circle" size={22} color={colors.primaryLight} />;
     case "error":
       return <Ionicons name="alert-circle" size={22} color={colors.error} />;
     case "checking":
@@ -253,13 +314,27 @@ function ModelStatusIcon({
   }
 }
 
-// ─── Storage bar ─────────────────────────────────────────────────────────────
+import { computeLocalModelsUsedBytes } from "../lib/local-storage-usage";
 
-function StorageBar({ usedBytes }: { usedBytes: number }) {
+export { computeLocalModelsUsedBytes };
+
+// ─── Storage bar (Settings only) ─────────────────────────────────────────────
+
+export function LocalDeviceStorageBar({ refreshKey = 0 }: { refreshKey?: number }) {
   const { colors } = useTheme();
   const storageStyles = useMemo(() => createStorageStyles(colors), [colors]);
+  const [usedBytes, setUsedBytes] = useState(0);
+
+  useEffect(() => {
+    void computeLocalModelsUsedBytes().then(setUsedBytes);
+  }, [refreshKey]);
+
   let freeBytes = 0;
-  try { freeBytes = Paths.availableDiskSpace; } catch { /* web/Expo Go */ }
+  try {
+    freeBytes = Paths.availableDiskSpace;
+  } catch {
+    /* web / Expo Go */
+  }
 
   const total = usedBytes + freeBytes;
   const pct = total > 0 ? Math.min((usedBytes / total) * 100, 100) : 0;
@@ -268,9 +343,9 @@ function StorageBar({ usedBytes }: { usedBytes: number }) {
     <View style={storageStyles.container}>
       <View style={storageStyles.row}>
         <Ionicons name="phone-portrait-outline" size={13} color={colors.textMuted} />
-        <Text style={storageStyles.label}>{formatStorageBytes(usedBytes)} used by models</Text>
+        <Text style={storageStyles.label}>{formatStorageBytes(usedBytes)} used by on-device models</Text>
         <Ionicons name="save-outline" size={12} color={colors.textDim} />
-        <Text style={storageStyles.free}>{formatStorageBytes(freeBytes)} free</Text>
+        <Text style={storageStyles.free}>{formatStorageBytes(freeBytes)} free on phone</Text>
       </View>
       <View style={storageStyles.track}>
         <View style={[storageStyles.fill, { width: `${pct}%` as `${number}%` }]} />
@@ -279,16 +354,6 @@ function StorageBar({ usedBytes }: { usedBytes: number }) {
   );
 }
 
-function createStorageStyles(colors: ThemeColors) {
-  return StyleSheet.create({
-    container: { marginBottom: 20 },
-    row: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
-    label: { color: colors.textMuted, fontSize: 12, flex: 1 },
-    free: { color: colors.textDim, fontSize: 12 },
-    track: { height: 3, backgroundColor: colors.borderStrong, borderRadius: 2, overflow: "hidden" },
-    fill: { height: 3, backgroundColor: colors.primary, borderRadius: 2 },
-  });
-}
 
 // ─── Model card ───────────────────────────────────────────────────────────────
 
@@ -297,6 +362,8 @@ function ModelCard({
   state,
   isSelected,
   onDownload,
+  onPause,
+  onResume,
   onCancel,
   onDelete,
   onSelect,
@@ -307,6 +374,8 @@ function ModelCard({
   state: ModelState;
   isSelected?: boolean;
   onDownload: () => void;
+  onPause?: () => void;
+  onResume?: () => void;
   onCancel: () => void;
   onDelete: () => void;
   onSelect?: () => void;
@@ -316,7 +385,9 @@ function ModelCard({
   const colors = useAccentPalette();
   const cardStyles = useMemo(() => createCardStyles(colors), [colors]);
   const isReady = state.status === "ready";
+  const isPaused = state.status === "paused";
   const isDownloading = state.status === "downloading";
+  const transferActive = isDownloading || isPaused;
   const isError = state.status === "error";
 
   const card = (
@@ -364,11 +435,17 @@ function ModelCard({
         <ModelStatusIcon status={state.status} isSelected={isSelected} colors={colors} />
       </View>
 
-      {isDownloading && (
+      {transferActive && (
         <View style={cardStyles.progressWrap}>
           <View style={cardStyles.progressHeader}>
-            <Ionicons name="cloud-download-outline" size={14} color={colors.primaryLight} />
-            <Text style={cardStyles.progressTitle}>Downloading model</Text>
+            <Ionicons
+              name={isPaused ? "pause-circle-outline" : "cloud-download-outline"}
+              size={14}
+              color={colors.primaryLight}
+            />
+            <Text style={cardStyles.progressTitle}>
+              {isPaused ? "Download paused" : "Downloading model"}
+            </Text>
             <Text style={cardStyles.progressPct}>{Math.round(state.progress * 100)}%</Text>
           </View>
           <View style={cardStyles.track}>
@@ -419,11 +496,26 @@ function ModelCard({
           </Pressable>
         )}
 
-        {isDownloading && (
-          <Pressable style={[cardStyles.btn, cardStyles.btnDanger]} onPress={onCancel}>
-            <Ionicons name="close-circle-outline" size={16} color={colors.error} />
-            <Text style={[cardStyles.btnTextDanger]}>Cancel download</Text>
-          </Pressable>
+        {transferActive && (
+          <View style={cardStyles.transferActions}>
+            <Pressable
+              style={[cardStyles.btn, cardStyles.btnSecondary, { flex: 1 }]}
+              onPress={isPaused ? onResume : onPause}
+            >
+              <Ionicons
+                name={isPaused ? "play-circle-outline" : "pause-circle-outline"}
+                size={16}
+                color={colors.primaryLight}
+              />
+              <Text style={cardStyles.btnTextSecondary}>
+                {isPaused ? "Resume" : "Pause"}
+              </Text>
+            </Pressable>
+            <Pressable style={[cardStyles.btn, cardStyles.btnDanger, { flex: 1 }]} onPress={onCancel}>
+              <Ionicons name="close-circle-outline" size={16} color={colors.error} />
+              <Text style={cardStyles.btnTextDanger}>Cancel</Text>
+            </Pressable>
+          </View>
         )}
 
         {isReady && (
@@ -460,89 +552,6 @@ function ModelCard({
   return card;
 }
 
-function createCardStyles(colors: ThemeColors) {
-  return StyleSheet.create({
-  container: {
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 16,
-    marginBottom: 10,
-  },
-  containerReady: { borderColor: colors.primaryBorder },
-  containerSelected: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primaryGlow,
-  },
-  topRow: { flexDirection: "row", alignItems: "flex-start", marginBottom: 12, gap: 12 },
-  modelIcon: {
-    width: 44,
-    height: 44,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  topBody: { flex: 1, minWidth: 0 },
-  nameRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" },
-  name: { color: colors.text, fontSize: 16, fontWeight: "700", flexShrink: 1 },
-  desc: { color: colors.textMuted, fontSize: 14, lineHeight: 20, marginBottom: 8 },
-  detailStats: { color: colors.textMuted, fontSize: 11, lineHeight: 15 },
-
-  progressWrap: { marginBottom: 12 },
-  progressHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 8,
-  },
-  progressTitle: { color: colors.primaryLight, fontSize: 12, fontWeight: "600", flex: 1 },
-  track: { height: 4, backgroundColor: colors.borderStrong, borderRadius: 2, overflow: "hidden", marginBottom: 8 },
-  fill: { height: 4, backgroundColor: colors.primary, borderRadius: 2 },
-  progressMeta: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 10 },
-  progressMetaItem: { flexDirection: "row", alignItems: "center", gap: 4 },
-  progressPct: { color: colors.primaryLight, fontSize: 12, fontWeight: "700" },
-  progressBytes: { color: colors.textDim, fontSize: 11 },
-  progressSpeed: { color: colors.textMuted, fontSize: 11 },
-
-  errorBox: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 6,
-    backgroundColor: "rgba(248,113,113,0.06)",
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "rgba(248,113,113,0.2)",
-    padding: 10,
-    marginBottom: 12,
-  },
-  errorText: { color: colors.error, fontSize: 12, flex: 1, lineHeight: 18 },
-
-  actions: {},
-  btn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    borderRadius: 12,
-    paddingVertical: 11,
-    paddingHorizontal: 16,
-  },
-  btnPrimary: { backgroundColor: colors.primary, borderWidth: 1, borderColor: colors.primary },
-  btnChat: { backgroundColor: colors.primary, borderWidth: 1, borderColor: colors.primary },
-  btnDanger: { backgroundColor: colors.errorBg, borderWidth: 1, borderColor: colors.errorBorder },
-  btnDangerIcon: {
-    backgroundColor: colors.errorBg,
-    borderWidth: 1,
-    borderColor: colors.errorBorder,
-    paddingHorizontal: 14,
-  },
-  btnDisabled: { opacity: 0.45 },
-  btnText: { color: "#fff", fontSize: 14, fontWeight: "600" },
-  btnTextDanger: { color: colors.error, fontSize: 14, fontWeight: "600" },
-  readyRow: { flexDirection: "row", gap: 8 },
-  });
-}
 
 // ─── Dev-build banner ─────────────────────────────────────────────────────────
 
@@ -572,46 +581,13 @@ function DevBuildBanner() {
   );
 }
 
-function createBannerStyles(colors: ThemeColors) {
-  return StyleSheet.create({
-    container: {
-      flexDirection: "row",
-      alignItems: "flex-start",
-      gap: 12,
-      backgroundColor: "rgba(245,158,11,0.06)",
-      borderRadius: 14,
-      borderWidth: 1,
-      borderColor: "rgba(245,158,11,0.3)",
-      padding: 16,
-      marginBottom: 20,
-    },
-    iconWrap: {
-      width: 40, height: 40, borderRadius: 12,
-      backgroundColor: "rgba(245,158,11,0.1)",
-      borderWidth: 1, borderColor: "rgba(245,158,11,0.2)",
-      alignItems: "center", justifyContent: "center", flexShrink: 0,
-    },
-    title: { color: "#f59e0b", fontSize: 14, fontWeight: "700", marginBottom: 6 },
-    body: { color: colors.textMuted, fontSize: 14, lineHeight: 20, marginBottom: 6 },
-    codeRow: {
-      backgroundColor: colors.markdownCodeBg,
-      borderRadius: 6,
-      borderWidth: 1,
-      borderColor: colors.markdownFenceBorder,
-      paddingHorizontal: 10,
-      paddingVertical: 5,
-      marginBottom: 6,
-      alignSelf: "flex-start",
-    },
-    code: { color: colors.markdownCodeText, fontFamily: "Courier", fontSize: 12 },
-  });
-}
 
 // ─── Compact downloaded row (unified library) ───────────────────────────────
 
 function LocalDownloadedLibraryRow({
   model,
   onPress,
+  onDelete,
   loaded = false,
   colorfulLogo = false,
   rowStyles,
@@ -619,15 +595,19 @@ function LocalDownloadedLibraryRow({
 }: {
   model: LocalModelInfo;
   onPress: () => void;
+  onDelete?: () => void;
   loaded?: boolean;
   colorfulLogo?: boolean;
   rowStyles: ReturnType<typeof createInstalledRowStyles>;
   colors: ThemeColors;
 }) {
-  const sizeLabel = resolveLocalModelSizeLabel(model, { useActualFileSize: true });
   const stats = getLocalModelStatItems(model, { useActualFileSize: true });
+  const sizeLabel =
+    resolveLocalModelSizeLabel(model, { useActualFileSize: true }) ??
+    sizeLabelFromStatItems(stats);
+  const loadedAccent = colors.primaryLight;
 
-  return (
+  const row = (
     <View style={rowStyles.wrap}>
       <Pressable
         onPress={onPress}
@@ -640,20 +620,22 @@ function LocalDownloadedLibraryRow({
           provider={model.provider}
           label={model.name}
           size={26}
-          color={colors.textMuted}
-          colorfulLogo={colorfulLogo}
+          color={loaded ? loadedAccent : colors.textMuted}
+          colorfulLogo={loaded || colorfulLogo}
           catalogSource="huggingface"
         />
       </View>
       <View style={rowStyles.body}>
         <View style={rowStyles.titleRow}>
-          <Text style={rowStyles.name} numberOfLines={1}>
+          <Text
+            style={[rowStyles.name, loaded && rowStyles.nameSelected]}
+            numberOfLines={1}
+          >
             {model.name}
           </Text>
           {loaded ? (
             <ModelTraitBadge
-              trait={{ label: "Loaded", color: colors.primaryLight }}
-              muted
+              trait={{ label: "Loaded", color: loadedAccent }}
               colors={colors}
             />
           ) : (
@@ -667,13 +649,25 @@ function LocalDownloadedLibraryRow({
         <ModelStatLine
           items={statItemsWithoutSize(stats)}
           colors={colors}
-          textStyle={rowStyles.stats}
-          muted
+          textStyle={[rowStyles.stats, loaded && rowStyles.statsSelected]}
+          muted={!loaded}
         />
       </View>
-      <LibraryRowSizeLabel label={sizeLabel} colors={colors} />
+      <LibraryRowSizeLabel
+        label={sizeLabel}
+        colors={colors}
+        style={loaded ? rowStyles.statsSelected : undefined}
+      />
       </Pressable>
     </View>
+  );
+
+  if (!onDelete) return row;
+
+  return (
+    <SwipeToDeleteRow onDelete={onDelete} backgroundColor={colors.bgElevated}>
+      {row}
+    </SwipeToDeleteRow>
   );
 }
 
@@ -698,7 +692,10 @@ function LocalModelDetailSheet({
   visible,
   onClose,
   onDownload,
+  onDelete,
   downloading,
+  deleting,
+  installed,
   disabled,
   colors,
   hfToken,
@@ -707,7 +704,10 @@ function LocalModelDetailSheet({
   visible: boolean;
   onClose: () => void;
   onDownload: () => void;
-  downloading: boolean;
+  onDelete?: () => void;
+  downloading?: boolean;
+  deleting?: boolean;
+  installed?: boolean;
   disabled?: boolean;
   colors: ThemeColors;
   hfToken?: string;
@@ -847,21 +847,39 @@ function LocalModelDetailSheet({
             >
               <Text style={modalStyles.secondaryBtnText}>Close</Text>
             </Pressable>
-            <Pressable
-              onPress={onDownload}
-              disabled={downloading || disabled}
-              style={({ pressed }) => [
-                modalStyles.primaryBtn,
-                (downloading || disabled) && { opacity: 0.55 },
-                pressed && !downloading && !disabled && { opacity: 0.88 },
-              ]}
-            >
-              {downloading ? (
-                <ActivityIndicator size="small" color={colors.primaryLight} />
-              ) : (
-                <Text style={modalStyles.primaryBtnText}>Download</Text>
-              )}
-            </Pressable>
+            {installed && onDelete ? (
+              <Pressable
+                onPress={onDelete}
+                disabled={deleting || disabled}
+                style={({ pressed }) => [
+                  modalStyles.destructiveBtn,
+                  (deleting || disabled) && { opacity: 0.55 },
+                  pressed && !deleting && !disabled && { opacity: 0.88 },
+                ]}
+              >
+                {deleting ? (
+                  <ActivityIndicator size="small" color={colors.error} />
+                ) : (
+                  <Text style={modalStyles.destructiveBtnText}>Delete</Text>
+                )}
+              </Pressable>
+            ) : (
+              <Pressable
+                onPress={onDownload}
+                disabled={downloading || disabled}
+                style={({ pressed }) => [
+                  modalStyles.primaryBtn,
+                  (downloading || disabled) && { opacity: 0.55 },
+                  pressed && !downloading && !disabled && { opacity: 0.88 },
+                ]}
+              >
+                {downloading ? (
+                  <ActivityIndicator size="small" color={colors.primaryLight} />
+                ) : (
+                  <Text style={modalStyles.primaryBtnText}>Download</Text>
+                )}
+              </Pressable>
+            )}
           </View>
         </Pressable>
       </Pressable>
@@ -907,73 +925,15 @@ function LocalDetailField({
   );
 }
 
-function createLocalDetailStyles(colors: ThemeColors) {
-  return StyleSheet.create({
-    card: { maxHeight: "82%", paddingBottom: 12 },
-    handle: {
-      width: 36,
-      height: 4,
-      borderRadius: 2,
-      backgroundColor: colors.borderStrong,
-      alignSelf: "center",
-      marginBottom: 12,
-    },
-    header: { flexDirection: "row", alignItems: "flex-start", gap: 12, marginBottom: 12 },
-    icon: {
-      width: 42,
-      height: 42,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    headerBody: {
-      flex: 1,
-      minWidth: 0,
-    },
-    publisher: {
-      color: colors.textMuted,
-      fontSize: 13,
-      lineHeight: 18,
-      marginTop: 2,
-    },
-    title: {
-      color: colors.text,
-      fontSize: 20,
-      fontWeight: "700",
-      lineHeight: 26,
-    },
-    stats: { color: colors.textMuted, fontSize: 11, lineHeight: 15, marginTop: 4 },
-    descriptionWrap: { marginTop: 8 },
-    description: {
-      color: colors.textMuted,
-      fontSize: 14,
-      lineHeight: 21,
-    },
-    fields: { marginTop: 16, gap: 12 },
-    field: { gap: 4 },
-    fieldLabel: {
-      color: colors.textDim,
-      fontSize: 11,
-      fontWeight: "700",
-      letterSpacing: 0.6,
-      textTransform: "uppercase",
-    },
-    fieldValueRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
-    fieldValue: { flex: 1, color: colors.text, fontSize: 14, lineHeight: 20 },
-    fieldMono: {
-      fontFamily: Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" }),
-      fontSize: 12,
-      lineHeight: 18,
-    },
-    copyBtn: { padding: 4, marginTop: -2 },
-    actions: { flexDirection: "row", gap: 10, marginTop: 16 },
-  });
-}
 
 function LocalCatalogRow({
   model,
   state,
   onPress,
   onDownload,
+  onPause,
+  onResume,
+  onCancel,
   onClearError,
   disabled,
   colorfulLogo = false,
@@ -984,6 +944,9 @@ function LocalCatalogRow({
   state: ModelState;
   onPress?: () => void;
   onDownload: () => void;
+  onPause?: () => void;
+  onResume?: () => void;
+  onCancel?: () => void;
   onClearError?: () => void;
   disabled?: boolean;
   colorfulLogo?: boolean;
@@ -991,8 +954,10 @@ function LocalCatalogRow({
   colors: ThemeColors;
 }) {
   const stats = getLocalModelStatItems(model);
-  const sizeLabel = resolveLocalCatalogDisplaySize(model);
+  const sizeLabel = resolveLocalCatalogDisplaySize(model) ?? sizeLabelFromStatItems(stats);
+  const paused = state.status === "paused";
   const downloading = state.status === "downloading";
+  const transferActive = downloading || paused;
   const hasError = state.status === "error" && !!state.error;
 
   return (
@@ -1017,6 +982,9 @@ function LocalCatalogRow({
           colorfulLogo={colorfulLogo}
           catalogSource="huggingface"
         />
+        {transferActive && onCancel ? (
+          <DownloadIconCancelOverlay onPress={onCancel} />
+        ) : null}
       </View>
       <View style={rowStyles.body}>
         <View style={rowStyles.titleRow}>
@@ -1035,33 +1003,40 @@ function LocalCatalogRow({
           textStyle={rowStyles.stats}
           muted
         />
-        {downloading ? (
-          <View style={rowStyles.progressTrack}>
-            <View
-              style={[
-                rowStyles.progressFill,
-                { width: `${Math.round(state.progress * 100)}%` },
-              ]}
-            />
-          </View>
+        {transferActive ? (
+          <CatalogDownloadProgress
+            progress={state.progress}
+            colors={colors}
+            trackStyle={rowStyles.progressTrack}
+          />
         ) : null}
       </View>
       <LibraryRowSizeLabel label={sizeLabel} colors={colors} />
       <Pressable
         onPress={(event) => {
           event.stopPropagation();
+          if (paused) {
+            onResume?.();
+            return;
+          }
+          if (downloading) {
+            onPause?.();
+            return;
+          }
           onDownload();
         }}
-        disabled={downloading || disabled}
+        disabled={disabled}
         style={({ pressed }) => [
           rowStyles.downloadBtn,
-          downloading && rowStyles.downloadBtnActive,
-          (downloading || disabled) && rowStyles.downloadBtnDisabled,
-          pressed && !downloading && !disabled && rowStyles.downloadBtnPressed,
+          transferActive && rowStyles.downloadBtnActive,
+          disabled && rowStyles.downloadBtnDisabled,
+          pressed && !disabled && rowStyles.downloadBtnPressed,
         ]}
       >
-        {downloading ? (
-          <ActivityIndicator size="small" color={colors.primaryLight} />
+        {paused ? (
+          <Ionicons name="play" size={16} color={colors.primaryLight} />
+        ) : downloading ? (
+          <Ionicons name="pause" size={16} color={colors.primaryLight} />
         ) : (
           <Ionicons name="cloud-download-outline" size={18} color={colors.primaryLight} />
         )}
@@ -1080,64 +1055,6 @@ function LocalCatalogRow({
   );
 }
 
-function createCatalogRowStyles(colors: ThemeColors) {
-  return StyleSheet.create({
-    rowWrap: {
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: colors.border,
-    },
-    row: {
-      flexDirection: "row",
-      alignItems: "flex-start",
-      gap: 12,
-      paddingVertical: 12,
-    },
-    rowBrowse: { alignItems: "center" },
-    rowPressed: { opacity: 0.82 },
-    icon: {
-      width: 44,
-      height: 44,
-      alignItems: "center",
-      justifyContent: "center",
-      flexShrink: 0,
-      marginTop: 1,
-    },
-    body: { flex: 1, minWidth: 0 },
-    titleRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      flexWrap: "wrap",
-      gap: 6,
-      marginBottom: 4,
-    },
-    name: { color: colors.text, fontSize: 16, fontWeight: "600", lineHeight: 21, flexShrink: 1 },
-    stats: { color: colors.textMuted, fontSize: 11, lineHeight: 15 },
-    progressTrack: {
-      height: 3,
-      backgroundColor: colors.borderStrong,
-      borderRadius: 2,
-      marginTop: 8,
-      overflow: "hidden",
-    },
-    progressFill: { height: 3, backgroundColor: colors.primary },
-    downloadBtn: {
-      width: 36,
-      height: 36,
-      alignItems: "center",
-      justifyContent: "center",
-      borderRadius: 999,
-      backgroundColor: colors.primaryGlow,
-      borderWidth: 1,
-      borderColor: colors.primaryBorder,
-      marginTop: 2,
-      flexShrink: 0,
-    },
-    downloadBtnActive: {},
-    downloadBtnDisabled: { opacity: 0.6 },
-    downloadBtnPressed: { opacity: 0.8 },
-    rowError: { marginTop: 6, marginHorizontal: 0 },
-  });
-}
 
 // ─── Compact installed row (library layout) ───────────────────────────────────
 
@@ -1147,6 +1064,7 @@ function LocalInstalledRow({
   isLoadedInMemory = false,
   onSelect,
   onClearSelection,
+  onDelete,
   ejecting = false,
   loading = false,
   browseOnly = false,
@@ -1161,6 +1079,7 @@ function LocalInstalledRow({
   loading?: boolean;
   onSelect?: () => void;
   onClearSelection?: () => void;
+  onDelete?: () => void;
   browseOnly?: boolean;
   colorfulLogo?: boolean;
   rowStyles: ReturnType<typeof createInstalledRowStyles>;
@@ -1223,14 +1142,15 @@ function LocalInstalledRow({
     </View>
   );
 
-  if (browseOnly) {
+  if (browseOnly && !onDelete) {
     return row;
   }
 
   return (
     <SwipeToDeleteRow
-      onLoad={!isLoadedInMemory && onSelect ? onSelect : undefined}
-      onEject={isLoadedInMemory || isSelected ? onClearSelection : undefined}
+      onLoad={!browseOnly && !isLoadedInMemory && onSelect ? onSelect : undefined}
+      onEject={!browseOnly && (isLoadedInMemory || isSelected) ? onClearSelection : undefined}
+      onDelete={onDelete}
       ejectDisabled={ejecting || loading}
       loadDisabled={loading}
       backgroundColor={colors.bgElevated}
@@ -1240,103 +1160,6 @@ function LocalInstalledRow({
   );
 }
 
-function createInstalledRowStyles(colors: ThemeColors) {
-  return StyleSheet.create({
-    wrap: {
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: colors.border,
-    },
-    row: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 10,
-      paddingVertical: 12,
-      paddingHorizontal: 12,
-      position: "relative",
-      overflow: "hidden",
-    },
-    rowSelected: {
-      backgroundColor: colors.primaryGlow,
-      borderRadius: radii.sm,
-    },
-    rowBrowse: {
-      paddingHorizontal: 0,
-    },
-    rowPressed: { opacity: 0.82 },
-    rowMuteWrap: {
-      flex: 1,
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 10,
-      minWidth: 0,
-      zIndex: 1,
-    },
-    icon: {
-      width: 44,
-      height: 44,
-      alignItems: "center",
-      justifyContent: "center",
-      flexShrink: 0,
-    },
-    body: { flex: 1, minWidth: 0 },
-    titleRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      flexWrap: "wrap",
-      gap: 6,
-      marginBottom: 4,
-    },
-    name: { color: colors.text, fontSize: 16, fontWeight: "600", lineHeight: 21, flexShrink: 1 },
-    nameSelected: { color: colors.primaryLight },
-    subtitle: {
-      color: colors.textDim,
-      fontSize: 12,
-      lineHeight: 16,
-      marginTop: 2,
-    },
-    meta: {
-      color: colors.textMuted,
-      fontSize: 12,
-      lineHeight: 16,
-      marginTop: 2,
-    },
-    stats: { color: colors.textMuted, fontSize: 11, lineHeight: 15 },
-    useBtn: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 4,
-      paddingHorizontal: 10,
-      paddingVertical: 7,
-      borderRadius: 999,
-      backgroundColor: colors.primary,
-      borderWidth: 1,
-      borderColor: colors.primary,
-    },
-    useBtnSelected: {
-      backgroundColor: colors.bgElevated,
-      borderColor: colors.primaryBorder,
-    },
-    useBtnPressed: { opacity: 0.85 },
-    useBtnText: { color: "#fff", fontSize: 12, fontWeight: "700" },
-    useBtnTextSelected: { color: colors.primaryLight },
-    readyIcon: { paddingHorizontal: 4 },
-    rowActions: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 4,
-      flexShrink: 0,
-    },
-    actionBtn: {
-      width: 32,
-      height: 32,
-      alignItems: "center",
-      justifyContent: "center",
-      borderRadius: 8,
-    },
-    actionBtnDisabled: { opacity: 0.45 },
-    actionBtnPressed: { opacity: 0.7 },
-  });
-}
 
 // ─── Model manager (modal content) ────────────────────────────────────────────
 
@@ -1365,6 +1188,7 @@ export function LocalModelsManager({
   modalityFilter: controlledModalityFilter,
   onModalityFilterChange,
   hideModalityFilters = false,
+  hideLinkDownload = false,
   libraryLayout = false,
   browseOnly = false,
   downloadOnly = false,
@@ -1375,6 +1199,7 @@ export function LocalModelsManager({
   showQuickDownloadLocal = false,
   unifiedDiscover,
   libraryActive = true,
+  registerLinkDownload,
 }: {
   selectedKey?: string | null;
   onSelect?: (key: string | null) => void;
@@ -1384,6 +1209,8 @@ export function LocalModelsManager({
   modalityFilter?: ModelCapabilityFilter;
   onModalityFilterChange?: (filter: ModelCapabilityFilter) => void;
   hideModalityFilters?: boolean;
+  /** Hide paste-link download field (Model Library uses a single search bar). */
+  hideLinkDownload?: boolean;
   /** Installed rows + download cards, matching the System library tab. */
   libraryLayout?: boolean;
   /** View and download only — no load/eject swipes. */
@@ -1402,6 +1229,8 @@ export function LocalModelsManager({
   unifiedDiscover?: UnifiedDiscoverConfig;
   /** Model library modal visibility — resets browse ordering when reopened. */
   libraryActive?: boolean;
+  /** Expose on-device GGUF download from an external link field (Model Library header). */
+  registerLinkDownload?: (download: (url: string) => Promise<void>) => void;
 }) {
   const router = useRouter();
   const { settings } = useApp();
@@ -1414,7 +1243,6 @@ export function LocalModelsManager({
   const [states, setStates] = useState<ModelStateMap>(() =>
     Object.fromEntries(LOCAL_MODEL_CATALOG.map((m) => [m.key, defaultState()]))
   );
-  const [usedBytes, setUsedBytes] = useState(0);
   const [deleteTarget, setDeleteTarget] = useState<LocalModelInfo | null>(null);
   const [ejectingKey, setEjectingKey] = useState<string | null>(null);
   const [loadingKey, setLoadingKey] = useState<string | null>(null);
@@ -1441,25 +1269,17 @@ export function LocalModelsManager({
     discoverStableOrderRef.current = [];
   }
 
-  // Active downloads: key → AbortController (cancel token)
-  const downloadRefs = useRef<Record<string, AbortController>>({});
-  // Speed tracking: key → {lastBytes, lastTime}
-  const speedRefs = useRef<Record<string, { lastBytes: number; lastTime: number }>>({});
-
   function patchState(key: string, patch: Partial<ModelState>) {
     setStates((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
   }
 
   const refreshStatus = useCallback(() => {
-    let used = 0;
     for (const model of LOCAL_MODEL_CATALOG) {
-      const exists = model.filename ? (() => {
-        try { return modelFile(model.filename).exists; } catch { return false; }
-      })() : false;
+      if (localModelDownloadStore.isActive(model.key)) continue;
+      const exists = model.filename ? isModelDownloaded(model.filename) : false;
 
       if (exists) {
         patchState(model.key, { status: "ready" });
-        used += modelFileSize(model.filename);
       } else {
         setStates((prev) => {
           const cur = prev[model.key];
@@ -1470,7 +1290,6 @@ export function LocalModelsManager({
         });
       }
     }
-    setUsedBytes(used);
   }, []);
 
   const refreshCustomModels = useCallback(async () => {
@@ -1489,92 +1308,57 @@ export function LocalModelsManager({
     void refreshCustomModels();
   }, [refreshStatus, refreshCustomModels]);
 
-  const handleDownload = useCallback(async (model: LocalModelInfo) => {
-    if (IS_EXPO_GO || blocked) {
-      return;
-    }
+  const catalogModels = useMemo(() => {
+    const builtInKeys = new Set(LOCAL_MODEL_CATALOG.map((model) => model.key));
+    const extras = customModels.filter((model) => !builtInKeys.has(model.key));
+    return [...LOCAL_MODEL_CATALOG, ...extras];
+  }, [customModels]);
 
-    patchState(model.key, {
-      status: "downloading",
-      progress: 0,
-      bytesWritten: 0,
-      totalBytes: 0,
-      speedMBs: 0,
-      etaSecs: 0,
-    });
-    speedRefs.current[model.key] = { lastBytes: 0, lastTime: Date.now() };
+  const {
+    getState: getDownloadState,
+    handleDownload,
+    handlePause,
+    handleResume,
+    handleCancel,
+    clearError: clearDownloadError,
+    hfAccessPrompt,
+    clearHfAccessPrompt,
+    acceptHfAccessAndRetry,
+    revision: downloadRevision,
+  } = useLocalModelDownloads(catalogModels, {
+    blocked,
+    active: libraryActive,
+    hfToken: settings.hfToken,
+  });
+  const [hfAcceptLoading, setHfAcceptLoading] = useState(false);
 
-    // Remove any partial file from a previous attempt
-    const destination = new File(Paths.document, model.filename);
-    if (destination.exists) destination.delete();
+  const displayState = useCallback(
+    (key: string): ModelState => {
+      const model = catalogModels.find((entry) => entry.key === key);
+      const storeKey = resolveLocalDownloadStoreKey(key, model, catalogModels, getDownloadState);
+      const fromStore = getDownloadState(storeKey);
+      const transferActive =
+        fromStore.status === "downloading" || fromStore.status === "paused";
+      const onDisk =
+        !!model?.filename &&
+        !transferActive &&
+        isModelDownloaded(model.filename);
 
-    const abortCtrl = new AbortController();
-    downloadRefs.current[model.key] = abortCtrl;
-
-    // Get expected size from HEAD request so progress polling works
-    let expectedBytes = 0;
-    try {
-      const head = await fetch(model.downloadUrl, { method: "HEAD", signal: abortCtrl.signal });
-      expectedBytes = parseInt(head.headers.get("content-length") ?? "0", 10);
-    } catch { /* no content-length — progress will be indeterminate */ }
-
-    // Poll file size every 500ms to show progress while downloadAsync runs
-    const pollInterval = setInterval(() => {
-      try {
-        const f = new File(Paths.document, model.filename);
-        if (!f.exists) return;
-        const written = f.size ?? 0;
-        const now = Date.now();
-        const ref = speedRefs.current[model.key];
-        if (!ref) return;
-        const deltaBytes = written - ref.lastBytes;
-        const deltaSecs = (now - ref.lastTime) / 1000;
-        let speedMBs = 0;
-        let etaSecs = 0;
-        if (deltaSecs >= 0.5 && deltaBytes > 0) {
-          speedMBs = deltaBytes / (1024 * 1024) / deltaSecs;
-          const remaining = Math.max(0, expectedBytes - written);
-          etaSecs = speedMBs > 0 ? remaining / (1024 * 1024) / speedMBs : 0;
-          speedRefs.current[model.key] = { lastBytes: written, lastTime: now };
-        }
-        const ratio = expectedBytes > 0 ? Math.min(written / expectedBytes, 0.99) : 0;
-        patchState(model.key, {
-          progress: ratio,
-          bytesWritten: written,
-          totalBytes: expectedBytes,
-          speedMBs,
-          etaSecs,
-        });
-      } catch { /* file not yet created */ }
-    }, 500);
-
-    try {
-      if (abortCtrl.signal.aborted) throw new Error("cancelled");
-      const result = await downloadAsync(model.downloadUrl, destination.uri);
-      clearInterval(pollInterval);
-      if (result && result.status < 400) {
-        patchState(model.key, { status: "ready", progress: 1, bytesWritten: expectedBytes, totalBytes: expectedBytes });
-        refreshStatus();
-        void refreshCustomModels();
-      } else {
-        patchState(model.key, {
-          status: "error",
-          error: `Download server returned an error (${result?.status ?? "unknown"}). Try again in a moment.`,
-        });
+      if (onDisk) {
+        return {
+          ...(fromStore.status === "ready" ? fromStore : states[storeKey] ?? fromStore),
+          status: "ready",
+          progress: 1,
+          error: undefined,
+        };
       }
-    } catch (e) {
-      clearInterval(pollInterval);
-      const msg = formatLocalDownloadError(e);
-      if (msg.toLowerCase().includes("cancel") || msg.toLowerCase().includes("abort")) {
-        patchState(model.key, { status: "idle", progress: 0 });
-      } else {
-        patchState(model.key, { status: "error", error: msg });
+      if (transferActive || fromStore.status === "error") {
+        return fromStore;
       }
-    } finally {
-      clearInterval(pollInterval);
-      delete downloadRefs.current[model.key];
-    }
-  }, [blocked, refreshStatus, refreshCustomModels]);
+      return fromStore;
+    },
+    [getDownloadState, states, catalogModels, downloadRevision]
+  );
 
   const handleCustomUrlDownload = useCallback(async () => {
     if (IS_EXPO_GO || blocked) return;
@@ -1588,7 +1372,7 @@ export function LocalModelsManager({
         if (prev.some((item) => item.key === model.key)) return prev;
         return [...prev, model];
       });
-      await handleDownload(model);
+      handleDownload(model);
       setCustomUrl("");
     } catch (e) {
       setCustomUrlError(errorFromUnknown(e));
@@ -1598,16 +1382,34 @@ export function LocalModelsManager({
     }
   }, [blocked, customUrl, handleDownload, refreshCustomModels]);
 
-  const handleCancel = useCallback(async (model: LocalModelInfo) => {
-    const ctrl = downloadRefs.current[model.key];
-    if (ctrl) {
-      ctrl.abort();
-      delete downloadRefs.current[model.key];
+  const downloadFromLink = useCallback(
+    async (raw: string) => {
+      if (IS_EXPO_GO || blocked) {
+        throw new Error(LOCAL_NATIVE_BUILD_MESSAGE);
+      }
+      const url = resolveLocalGgufDownloadUrl(raw);
+      const record = await registerCustomLocalModel(url);
+      const model = toLocalModelInfo(record);
+      setCustomModels((prev) => {
+        if (prev.some((item) => item.key === model.key)) return prev;
+        return [...prev, model];
+      });
+      handleDownload(model);
+      void refreshCustomModels();
+    },
+    [blocked, handleDownload, refreshCustomModels]
+  );
+
+  useEffect(() => {
+    registerLinkDownload?.(downloadFromLink);
+  }, [registerLinkDownload, downloadFromLink]);
+
+  useEffect(() => {
+    if (downloadRevision > 0) {
+      refreshStatus();
+      void refreshCustomModels();
     }
-    // Clean up any partial file
-    deleteModelFile(model.filename);
-    patchState(model.key, { status: "idle", progress: 0, bytesWritten: 0, totalBytes: 0 });
-  }, []);
+  }, [downloadRevision, refreshStatus, refreshCustomModels]);
 
   const performLoad = useCallback(
     async (model: LocalModelInfo) => {
@@ -1650,36 +1452,181 @@ export function LocalModelsManager({
     setDeleteTarget(model);
   }, []);
 
-  const confirmDelete = useCallback(() => {
+  const confirmDelete = useCallback(async () => {
     if (!deleteTarget) return;
-    deleteModelFile(deleteTarget.filename);
-    if (deleteTarget.key.startsWith("custom:")) {
-      void removeCustomLocalModel(deleteTarget.filename);
-      setCustomModels((prev) => prev.filter((model) => model.key !== deleteTarget.key));
-    }
-    patchState(deleteTarget.key, { status: "idle", progress: 0, bytesWritten: 0, totalBytes: 0 });
-    refreshStatus();
+    const model = deleteTarget;
     setDeleteTarget(null);
-  }, [deleteTarget, refreshStatus]);
+    if (getLoadedOnDeviceModelKey() === model.key) {
+      await ejectOnDeviceModel(model.key);
+    }
+    if (selectedKey === model.key) {
+      await Promise.resolve(onSelect?.(null));
+    }
+    await localModelDownloadStore.removeInstalled(model);
+    if (model.key.startsWith("custom:")) {
+      void removeCustomLocalModel(model.filename);
+      setCustomModels((prev) => prev.filter((entry) => entry.key !== model.key));
+    }
+    patchState(model.key, { status: "idle", progress: 0, bytesWritten: 0, totalBytes: 0 });
+    refreshStatus();
+    setDetailModel((current) => (current?.key === model.key ? null : current));
+  }, [deleteTarget, refreshStatus, selectedKey, onSelect]);
 
-  const handleChat = useCallback((model: LocalModelInfo) => {
-    router.push(`/chat/new?localModel=${model.key}` as any);
-  }, [router]);
+  const { openChat } = useHubNavigation();
+  const handleChat = useCallback(
+    (model: LocalModelInfo) => {
+      openChat();
+      router.replace(`/chat/new?localModel=${model.key}` as `/chat/${string}`);
+    },
+    [openChat, router]
+  );
 
-  const readyCount = Object.values(states).filter((s) => s.status === "ready").length;
-  const catalogModels = useMemo(() => {
-    const builtInKeys = new Set(LOCAL_MODEL_CATALOG.map((model) => model.key));
-    const extras = customModels.filter((model) => !builtInKeys.has(model.key));
-    return [...LOCAL_MODEL_CATALOG, ...extras];
-  }, [customModels]);
+  const readyCount = catalogModels.filter(
+    (model) => displayState(model.key).status === "ready"
+  ).length;
 
   const filteredCatalog = useMemo(
     () => filterLocalModels(catalogModels, searchQuery, effectiveCapabilityFilter),
     [catalogModels, searchQuery, effectiveCapabilityFilter]
   );
 
-  const installedModels = filteredCatalog.filter((m) => states[m.key]?.status === "ready");
-  const availableModels = filteredCatalog.filter((m) => states[m.key]?.status !== "ready");
+  const [hfSearchModels, setHfSearchModels] = useState<LocalModelInfo[]>([]);
+  const [hfSearchLoading, setHfSearchLoading] = useState(false);
+  const [hfSearchError, setHfSearchError] = useState<string | null>(null);
+  const hfSearchRequestRef = useRef(0);
+
+  useEffect(() => {
+    if (blocked || IS_EXPO_GO || !libraryActive) {
+      setHfSearchModels([]);
+      setHfSearchLoading(false);
+      return;
+    }
+    const query = searchQuery.trim();
+    const discoverMode = librarySection === "discover" || librarySection === "all";
+    if (!discoverMode || query.length < 2 || tryResolveLocalGgufDownloadUrl(query)) {
+      setHfSearchModels([]);
+      setHfSearchLoading(false);
+      setHfSearchError(null);
+      return;
+    }
+
+    const requestId = ++hfSearchRequestRef.current;
+    setHfSearchLoading(true);
+    setHfSearchError(null);
+    const timer = setTimeout(() => {
+      void searchHuggingFaceLocalModels(query, {
+        hfToken: settings.hfToken,
+        capabilityFilter: effectiveCapabilityFilter,
+      })
+        .then((page) => {
+          if (requestId !== hfSearchRequestRef.current) return;
+          setHfSearchModels(page.models);
+          setHfSearchError(null);
+        })
+        .catch((error) => {
+          if (requestId !== hfSearchRequestRef.current) return;
+          setHfSearchModels([]);
+          setHfSearchError(errorFromUnknown(error));
+        })
+        .finally(() => {
+          if (requestId === hfSearchRequestRef.current) setHfSearchLoading(false);
+        });
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [
+    blocked,
+    libraryActive,
+    librarySection,
+    searchQuery,
+    effectiveCapabilityFilter,
+    settings.hfToken,
+  ]);
+
+  const installedModels = filteredCatalog.filter(
+    (m) => displayState(m.key).status === "ready"
+  );
+  const availableModels = filteredCatalog.filter(
+    (m) => displayState(m.key).status !== "ready"
+  );
+
+  const directGgufModel = useMemo(() => {
+    if (blocked || IS_EXPO_GO || !searchQuery.trim()) return null;
+    const url = tryResolveLocalGgufDownloadUrl(searchQuery);
+    if (!url) return null;
+    const built = buildPendingLocalModelFromGgufUrl(url);
+    const existing =
+      catalogModels.find(
+        (model) =>
+          model.key === built.key ||
+          model.filename === built.filename ||
+          model.downloadUrl === url
+      ) ?? null;
+    const target = existing ?? built;
+    if (displayState(target.key).status === "ready") return null;
+    return target;
+  }, [blocked, searchQuery, catalogModels, displayState]);
+
+  const discoverLocalModels = useMemo(() => {
+    let models: LocalModelInfo[];
+    if (!directGgufModel) {
+      models = availableModels;
+    } else if (availableModels.some((model) => model.key === directGgufModel.key)) {
+      models = availableModels;
+    } else {
+      models = [directGgufModel, ...availableModels];
+    }
+
+    if (hfSearchModels.length === 0) return models;
+
+    const seen = new Set(models.map((model) => model.key));
+    const merged = [...models];
+    for (const model of hfSearchModels) {
+      if (seen.has(model.key)) continue;
+      if (displayState(model.key).status === "ready") continue;
+      merged.push(model);
+      seen.add(model.key);
+    }
+    return merged;
+  }, [availableModels, directGgufModel, hfSearchModels, displayState]);
+
+  const ensureCustomModelRegistered = useCallback(
+    async (model: LocalModelInfo): Promise<LocalModelInfo> => {
+      if (!model.key.startsWith("custom:")) return model;
+      const existing = catalogModels.find((entry) => entry.key === model.key);
+      if (existing) return existing;
+      const record = await registerCustomLocalModel(model.downloadUrl);
+      const registered = toLocalModelInfo(record);
+      setCustomModels((prev) =>
+        prev.some((entry) => entry.key === registered.key) ? prev : [...prev, registered]
+      );
+      return registered;
+    },
+    [catalogModels]
+  );
+
+  const handleDiscoverDownload = useCallback(
+    (model: LocalModelInfo) => {
+      if (!model.key.startsWith("custom:")) {
+        handleDownload(model);
+        return;
+      }
+
+      const resolved = catalogModels.some((entry) => entry.key === model.key)
+        ? model
+        : buildPendingLocalModelFromGgufUrl(model.downloadUrl);
+
+      if (!catalogModels.some((entry) => entry.key === resolved.key)) {
+        setCustomModels((prev) =>
+          prev.some((entry) => entry.key === resolved.key) ? prev : [...prev, resolved]
+        );
+      }
+
+      handleDownload(resolved);
+      void ensureCustomModelRegistered(model);
+    },
+    [catalogModels, ensureCustomModelRegistered, handleDownload]
+  );
   const loadedKey = getLoadedOnDeviceModelKey();
   const loadedModel =
     loadedKey != null ? installedModels.find((model) => model.key === loadedKey) ?? null : null;
@@ -1687,8 +1634,12 @@ export function LocalModelsManager({
 
   const quickAccessLocalModels = useMemo(() => {
     if (!showQuickDownloadLocal || searchQuery.trim()) return [];
-    return getQuickAccessLocalModels().filter((model) => states[model.key]?.status !== "ready");
-  }, [showQuickDownloadLocal, searchQuery, states]);
+    return getQuickAccessLocalModels().filter(
+      (model) =>
+        displayState(model.key).status !== "ready" ||
+        localModelDownloadStore.isActive(model.key)
+    );
+  }, [showQuickDownloadLocal, searchQuery, displayState, downloadRevision]);
 
   const quickAccessLocalKeySet = useMemo(
     () => new Set<string>(QUICK_ACCESS_LOCAL_MODEL_KEYS),
@@ -1711,12 +1662,12 @@ export function LocalModelsManager({
   const visibleAvailableModels = browseOnly || librarySection === "discover"
     ? availableModels.slice(0, downloadVisibleCount)
     : availableModels;
+  const installedListCount =
+    librarySection === "installed" ? idleInstalledModels.length : installedModels.length;
   const hasMoreInstalled =
     (browseOnly || librarySection === "downloaded" || librarySection === "installed") &&
     libraryLayout &&
-    (librarySection === "installed"
-      ? idleInstalledModels.length > installedVisibleCount
-      : installedModels.length > installedVisibleCount);
+    libraryHasMorePages(installedVisibleCount, installedListCount);
 
   const mergedDiscoverItems = useMemo(() => {
     if (!unifiedDiscover || librarySection !== "discover") return [];
@@ -1726,7 +1677,7 @@ export function LocalModelsManager({
         : undefined;
     const merged = mergeStableLibraryBrowseItems(
       unifiedDiscover.remoteEntries,
-      availableModels,
+      discoverLocalModels,
       previousKeys
     );
     discoverStableOrderRef.current = merged.map((item) => item.key);
@@ -1735,7 +1686,7 @@ export function LocalModelsManager({
   }, [
     unifiedDiscover,
     librarySection,
-    availableModels,
+    discoverLocalModels,
     searchQuery,
     effectiveCapabilityFilter,
   ]);
@@ -1755,15 +1706,40 @@ export function LocalModelsManager({
     : mergedDiscoverItems.slice(0, discoverVisibleCount);
 
   const mergedDiscoverTotalCount = unifiedDiscover?.groupBySource
-    ? (groupedDiscover?.totalCount ?? mergedDiscoverItems.length)
+    ? (slicedGroupedDiscover?.totalCount ?? mergedDiscoverItems.length)
     : mergedDiscoverItems.length;
 
   const hasMoreDownloadable =
     (browseOnly || librarySection === "discover") &&
     libraryLayout &&
     (unifiedDiscover
-      ? discoverVisibleCount < mergedDiscoverTotalCount || !!unifiedDiscover.hasMoreRemote
-      : availableModels.length > downloadVisibleCount);
+      ? libraryHasMorePages(
+          discoverVisibleCount,
+          mergedDiscoverTotalCount,
+          !!unifiedDiscover.hasMoreRemote
+        )
+      : libraryHasMorePages(downloadVisibleCount, availableModels.length));
+
+  useEffect(() => {
+    if (!unifiedDiscover || librarySection !== "discover" || !libraryActive) return;
+    const remoteEntries = visibleMergedDiscoverItems
+      .filter((item): item is { kind: "remote"; key: string; entry: RemoteLibraryEntry } => item.kind === "remote")
+      .map((item) => item.entry);
+    if (remoteEntries.length === 0) return;
+    let cancelled = false;
+    void prefetchRemoteLibrarySizes(remoteEntries, { hfToken: settings.hfToken }).then(() => {
+      if (!cancelled) setHfSizeRevision((revision) => revision + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    unifiedDiscover,
+    librarySection,
+    libraryActive,
+    visibleMergedDiscoverItems,
+    settings.hfToken,
+  ]);
 
   const openModelDetail = useCallback((model: LocalModelInfo) => {
     setDetailModel(model);
@@ -1775,14 +1751,17 @@ export function LocalModelsManager({
         <LocalCatalogRow
           key={model.key}
           model={model}
-          state={states[model.key] ?? defaultState()}
+          state={displayState(model.key)}
           disabled={blocked || IS_EXPO_GO}
           onPress={libraryLayout ? () => openModelDetail(model) : undefined}
           colorfulLogo={libraryLayout}
           rowStyles={catalogRowStyles}
           colors={colors}
           onDownload={() => handleDownload(model)}
-          onClearError={() => patchState(model.key, { status: "idle", error: undefined })}
+          onPause={() => handlePause(model.key)}
+          onResume={() => handleResume(model)}
+          onCancel={() => handleCancel(model)}
+          onClearError={() => clearDownloadError(model.key, model.filename)}
         />
       ));
     }
@@ -1814,18 +1793,20 @@ export function LocalModelsManager({
             <ModelCard
               key={model.key}
               model={model}
-              state={states[model.key] ?? defaultState()}
+              state={displayState(model.key)}
               isSelected={selectedKey === model.key}
               onDownload={() => handleDownload(model)}
+              onPause={() => handlePause(model.key)}
+              onResume={() => handleResume(model)}
               onCancel={() => handleCancel(model)}
               onDelete={() => handleDelete(model)}
               onSelect={
-                onSelect && states[model.key]?.status === "ready"
+                onSelect && displayState(model.key).status === "ready"
                   ? () => onSelect(model.key)
                   : undefined
               }
               onChat={showChatAction ? () => handleChat(model) : undefined}
-              onClearError={() => patchState(model.key, { status: "idle", error: undefined })}
+              onClearError={() => clearDownloadError(model.key, model.filename)}
             />
           ))}
         </View>
@@ -1836,9 +1817,12 @@ export function LocalModelsManager({
   const noDiscoverResults =
     libraryLayout &&
     librarySection === "discover" &&
+    !directGgufModel &&
+    !hfSearchLoading &&
+    !hfSearchError &&
     (unifiedDiscover
       ? !unifiedDiscover.loading && mergedDiscoverItems.length === 0
-      : searchQuery.trim().length > 0 && filteredCatalog.length === 0);
+      : searchQuery.trim().length > 0 && filteredCatalog.length === 0 && hfSearchModels.length === 0);
 
   const showDownloadedSection =
     librarySection === "all"
@@ -1847,26 +1831,20 @@ export function LocalModelsManager({
   const showLoadedSection = librarySection === "loaded";
   const showDiscoverSection =
     librarySection === "all" ? true : librarySection === "discover";
-  /** Chat picker load/eject swipes — not Model Library (view-only rows). */
-  const showSwipeLoadRows =
-    !browseOnly && !downloadOnly && (!libraryLayout || librarySection === "all");
-  const showStorageBar =
-    !IS_EXPO_GO && !blocked && librarySection !== "downloaded";
+  /** Chat picker load/eject swipes — never on Model Library. */
+  const showSwipeLoadRows = !libraryLayout && !browseOnly && !downloadOnly;
   const showCustomUrlField =
+    !hideLinkDownload &&
+    !registerLinkDownload &&
     libraryLayout &&
     !blocked &&
     !IS_EXPO_GO &&
+    !directGgufModel &&
     (librarySection === "discover" || (librarySection === "all" && downloadOnly));
 
   return (
     <View>
       {IS_EXPO_GO && !libraryLayout && <DevBuildBanner />}
-
-      {showStorageBar ? (
-        <View style={libraryLayout ? { marginBottom: 4 } : undefined}>
-          <StorageBar usedBytes={usedBytes} />
-        </View>
-      ) : null}
 
       {showCustomUrlField ? (
         <View style={{ marginBottom: 10 }}>
@@ -1910,9 +1888,21 @@ export function LocalModelsManager({
         />
       ) : null}
 
+      {hfSearchError ? (
+        <ThemedError
+          message={hfSearchError}
+          variant="inline"
+          onDismiss={() => setHfSearchError(null)}
+        />
+      ) : null}
+
       {noDiscoverResults ? (
         <View style={styles.emptySearch}>
           <Text style={styles.emptySearchTitle}>No model found.</Text>
+          <Text style={styles.emptySearchBody}>
+            Try a model name, org/model id, or paste a Hugging Face GGUF link
+            (…/resolve/main/model.gguf). On-device search also looks up GGUF repos on Hugging Face.
+          </Text>
         </View>
       ) : libraryLayout ? (
         <>
@@ -1921,22 +1911,33 @@ export function LocalModelsManager({
               <LocalDownloadedLibraryRow
                 model={loadedModel}
                 loaded
-                colorfulLogo={libraryLayout}
                 onPress={() => setDetailModel(loadedModel)}
+                onDelete={blocked ? undefined : () => handleDelete(loadedModel)}
                 rowStyles={installedRowStyles}
                 colors={colors}
               />
             </View>
           ) : null}
 
-          {librarySection === "installed" && idleInstalledModels.length > 0 ? (
+          {librarySection === "installed" &&
+          (loadedModel || idleInstalledModels.length > 0) ? (
             <View style={styles.librarySection}>
+              {loadedModel ? (
+                <LocalDownloadedLibraryRow
+                  model={loadedModel}
+                  loaded
+                  onPress={() => setDetailModel(loadedModel)}
+                  onDelete={blocked ? undefined : () => handleDelete(loadedModel)}
+                  rowStyles={installedRowStyles}
+                  colors={colors}
+                />
+              ) : null}
               {visibleIdleInstalledModels.map((model) => (
                 <LocalDownloadedLibraryRow
                   key={model.key}
                   model={model}
-                  colorfulLogo={libraryLayout}
                   onPress={() => setDetailModel(model)}
+                  onDelete={blocked ? undefined : () => handleDelete(model)}
                   rowStyles={installedRowStyles}
                   colors={colors}
                 />
@@ -1961,6 +1962,7 @@ export function LocalModelsManager({
                   loaded={model.key === loadedKey}
                   colorfulLogo={libraryLayout}
                   onPress={() => setDetailModel(model)}
+                  onDelete={blocked ? undefined : () => handleDelete(model)}
                   rowStyles={installedRowStyles}
                   colors={colors}
                 />
@@ -1991,6 +1993,7 @@ export function LocalModelsManager({
                     onSelect={
                       onSelect && !blocked ? () => onSelect(model.key) : undefined
                     }
+                    onDelete={blocked ? undefined : () => handleDelete(model)}
                   />
                 </AnimatedLibraryRow>
               ))}
@@ -2031,6 +2034,7 @@ export function LocalModelsManager({
                   onClearSelection={
                     onSelect && !blocked ? () => void performEject(loadedModel) : undefined
                   }
+                  onDelete={blocked ? undefined : () => handleDelete(loadedModel)}
                 />
               </AnimatedLibraryRow>
             </View>
@@ -2069,6 +2073,7 @@ export function LocalModelsManager({
                         ? () => void performEject(model)
                         : undefined
                     }
+                    onDelete={blocked ? undefined : () => handleDelete(model)}
                   />
                 </AnimatedLibraryRow>
               ))}
@@ -2095,18 +2100,18 @@ export function LocalModelsManager({
                             <LocalCatalogRow
                               key={item.model.key}
                               model={item.model}
-                              state={states[item.model.key] ?? defaultState()}
+                              state={displayState(item.model.key)}
                               disabled={blocked || IS_EXPO_GO}
                               onPress={() => openModelDetail(item.model)}
                               colorfulLogo={libraryLayout}
                               rowStyles={catalogRowStyles}
                               colors={colors}
-                              onDownload={() => handleDownload(item.model)}
+                              onDownload={() => void handleDiscoverDownload(item.model)}
+                              onPause={() => handlePause(item.model.key)}
+                              onResume={() => handleResume(item.model)}
+                              onCancel={() => handleCancel(item.model)}
                               onClearError={() =>
-                                patchState(item.model.key, {
-                                  status: "idle",
-                                  error: undefined,
-                                })
+                                clearDownloadError(item.model.key, item.model.filename)
                               }
                             />
                           )
@@ -2121,15 +2126,18 @@ export function LocalModelsManager({
                           <LocalCatalogRow
                             key={item.model.key}
                             model={item.model}
-                            state={states[item.model.key] ?? defaultState()}
+                            state={displayState(item.model.key)}
                             disabled={blocked || IS_EXPO_GO}
                             onPress={() => openModelDetail(item.model)}
                             colorfulLogo={libraryLayout}
                             rowStyles={catalogRowStyles}
                             colors={colors}
-                            onDownload={() => handleDownload(item.model)}
+                            onDownload={() => void handleDiscoverDownload(item.model)}
+                            onPause={() => handlePause(item.model.key)}
+                            onResume={() => handleResume(item.model)}
+                            onCancel={() => handleCancel(item.model)}
                             onClearError={() =>
-                              patchState(item.model.key, { status: "idle", error: undefined })
+                              clearDownloadError(item.model.key, item.model.filename)
                             }
                           />
                         )
@@ -2188,7 +2196,7 @@ export function LocalModelsManager({
               </Text>
               <Text style={styles.emptySearchBody}>
                 {downloadOnly && installedModels.length > 0
-                  ? "Browse Hugging Face below or paste a GGUF link to add more models."
+                  ? "Search above to find more models to download."
                   : "Pick a model below to download and run offline — no Mac required."}
               </Text>
             </View>
@@ -2207,9 +2215,23 @@ export function LocalModelsManager({
         }}
         onDownload={() => {
           if (!detailModel) return;
-          void handleDownload(detailModel);
+          if (detailModel.key.startsWith("custom:") || !LOCAL_MODEL_CATALOG.some((m) => m.key === detailModel.key)) {
+            handleDiscoverDownload(detailModel);
+            return;
+          }
+          handleDownload(detailModel);
         }}
-        downloading={detailModel ? states[detailModel.key]?.status === "downloading" : false}
+        onDelete={
+          detailModel && displayState(detailModel.key).status === "ready" && !blocked
+            ? () => handleDelete(detailModel)
+            : undefined
+        }
+        installed={detailModel ? displayState(detailModel.key).status === "ready" : false}
+        downloading={
+          detailModel
+            ? ["downloading", "paused"].includes(displayState(detailModel.key).status)
+            : false
+        }
         disabled={blocked || IS_EXPO_GO}
         colors={colors}
         hfToken={settings.hfToken}
@@ -2234,8 +2256,31 @@ export function LocalModelsManager({
         confirmLabel="Delete"
         cancelLabel="Cancel"
         destructive
-        onConfirm={confirmDelete}
+        onConfirm={() => void confirmDelete()}
         onCancel={() => setDeleteTarget(null)}
+      />
+
+      <HfModelAccessDialog
+        visible={hfAccessPrompt !== null}
+        issue={hfAccessPrompt?.issue ?? null}
+        acceptLoading={hfAcceptLoading}
+        onAccept={
+          hfAccessPrompt?.issue.kind === "acceptance_required"
+            ? () => {
+                setHfAcceptLoading(true);
+                void acceptHfAccessAndRetry()
+                  .then((result) => {
+                    if (!result.ok) setHfSearchError(result.message);
+                  })
+                  .finally(() => setHfAcceptLoading(false));
+              }
+            : undefined
+        }
+        onOpenBrowser={() => {
+          if (!hfAccessPrompt) return;
+          void Linking.openURL(huggingFaceModelPageUrl(hfAccessPrompt.issue.repoId));
+        }}
+        onCancel={clearHfAccessPrompt}
       />
     </View>
   );
@@ -2243,81 +2288,3 @@ export function LocalModelsManager({
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-function createLocalModelsStyles(colors: ThemeColors) {
-  return StyleSheet.create({
-    statRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 16 },
-    statText: { color: colors.primaryLight, fontSize: 13 },
-
-    librarySection: { marginBottom: 8 },
-    librarySectionSpaced: { marginTop: 8 },
-    librarySectionTitle: createSectionSubtitleStyle(colors),
-    quickDownloadBlock: { marginBottom: 4 },
-    quickDownloadPlatformTitle: {
-      color: colors.textDim,
-      fontSize: 12,
-      fontWeight: "700",
-      letterSpacing: 0.4,
-      textTransform: "uppercase",
-      marginTop: 8,
-      marginBottom: 2,
-    },
-    libraryLoading: {
-      alignItems: "center",
-      justifyContent: "center",
-      paddingVertical: 28,
-      paddingHorizontal: 16,
-      gap: 10,
-    },
-    libraryLoadingText: {
-      color: colors.textMuted,
-      fontSize: 13,
-      lineHeight: 18,
-    },
-    emptySearch: {
-      alignItems: "center",
-      paddingVertical: 28,
-      paddingHorizontal: 16,
-      gap: 6,
-    },
-    emptySearchTitle: { color: colors.text, fontSize: 16, fontWeight: "700", marginTop: 4 },
-    emptySearchBody: {
-      color: colors.textMuted,
-      fontSize: 13,
-      lineHeight: 18,
-      textAlign: "center",
-      maxWidth: 280,
-    },
-
-    providerHeader: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 8,
-      marginTop: 20,
-      marginBottom: 10,
-    },
-    providerIcon: {
-      width: 28,
-      height: 28,
-      borderRadius: 8,
-      borderWidth: 1,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    providerLabel: {
-      color: colors.textMuted,
-      fontSize: 12,
-      fontWeight: "600",
-      letterSpacing: 0.6,
-      textTransform: "uppercase",
-    },
-
-    footnote: {
-      flexDirection: "row", alignItems: "flex-start", gap: 8,
-      marginTop: 12, padding: 14,
-      backgroundColor: colors.surface, borderRadius: 12,
-      borderWidth: 1, borderColor: colors.border,
-    },
-    footnoteText: { color: colors.textMuted, fontSize: 14, lineHeight: 20, flex: 1 },
-    footnoteLink: { color: colors.primary, fontWeight: "600" },
-  });
-}

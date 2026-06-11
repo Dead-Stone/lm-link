@@ -24,6 +24,9 @@ fi
 echo "JAVA_HOME=$JAVA_HOME"
 echo "ANDROID_HOME=$ANDROID_HOME"
 
+echo "Regenerating brand icons + syncing native Android assets…"
+npm run prepare-build-assets
+
 # Avoid Gradle journal lock conflicts with Android Studio.
 if [ -d android ]; then
   (cd android && ./gradlew --stop) >/dev/null 2>&1 || true

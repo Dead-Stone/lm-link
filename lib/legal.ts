@@ -9,6 +9,9 @@ export const GITHUB_PAGES_BASE = "https://dead-stone.github.io/lm-link";
 
 export const PRIVACY_POLICY_URL = `${GITHUB_PAGES_BASE}/`;
 
+/** Public install one-pager — GitHub Pages `docs/install.html`. */
+export const INSTALL_PAGE_URL = `${GITHUB_PAGES_BASE}/install.html`;
+
 export const THIRD_PARTY_NOTICES_URL = `${GITHUB_PAGES_BASE}/THIRD_PARTY_NOTICES.html`;
 
 export const SOURCE_CODE_URL = GITHUB_REPO;

@@ -1,5 +1,6 @@
 import { isPlausibleCatalogModelId } from "./catalog-model-id";
 import {
+  HuggingFaceApiError,
   huggingFaceApiFetch,
   huggingFaceApiFetchUrl,
   parseHuggingFaceLinkNextUrl,
@@ -110,7 +111,7 @@ function hasExplicitRemoteLibrarySize(
 ): boolean {
   const curated = findCuratedRemoteLibraryEntry(entry.id);
   return !!resolveFileSizeLabel(
-    entry.sizeLabel,
+    entry.sizeLabel && entry.sizeLabel !== "—" ? entry.sizeLabel : undefined,
     curated?.sizeLabel,
     entry.id,
     entry.name,
@@ -118,30 +119,39 @@ function hasExplicitRemoteLibrarySize(
   );
 }
 
+function resolveRemoteLibraryParamLabel(
+  entry: Pick<RemoteLibraryEntry, "id" | "params"> & { name?: string }
+): string | null {
+  const curated = findCuratedRemoteLibraryEntry(entry.id);
+  return (
+    entry.params ??
+    curated?.params ??
+    extractModelParamLabel(entry.id, entry.name, entry.params) ??
+    parseModelName(entry.id).sizeTag ??
+    null
+  );
+}
+
 /** Sync size: known labels, HF cache, then param estimate. */
 export function resolveRemoteLibrarySizeLabelWithHfCache(
-  entry: Pick<RemoteLibraryEntry, "id" | "name" | "sizeLabel" | "params" | "description">
-): string | null {
-  if (hasExplicitRemoteLibrarySize(entry)) {
-    const curated = findCuratedRemoteLibraryEntry(entry.id);
-    return resolveFileSizeLabel(
-      entry.sizeLabel,
-      curated?.sizeLabel,
-      entry.id,
-      entry.name,
-      entry.description
-    );
+  entry: Pick<RemoteLibraryEntry, "id" | "sizeLabel" | "params" | "description"> & {
+    name?: string;
   }
+): string | null {
+  const curated = findCuratedRemoteLibraryEntry(entry.id);
+  const resolved = resolveFileSizeLabel(
+    entry.sizeLabel && entry.sizeLabel !== "—" ? entry.sizeLabel : undefined,
+    curated?.sizeLabel,
+    entry.id,
+    entry.name,
+    entry.description
+  );
+  if (resolved) return resolved;
 
   const cachedHf = getCachedHfLibrarySizeLabel(entry.id);
   if (cachedHf) return cachedHf;
 
-  const curated = findCuratedRemoteLibraryEntry(entry.id);
-  const param =
-    entry.params ??
-    curated?.params ??
-    extractModelParamLabel(entry.id, entry.name, entry.params) ??
-    null;
+  const param = resolveRemoteLibraryParamLabel(entry);
   if (!param) return null;
 
   const estimate = estimateDownloadSizeFromParams(param);
@@ -313,11 +323,15 @@ function entriesFromHuggingFaceModels(
   return entries;
 }
 
-async function fetchHuggingFaceModelList(
-  params: URLSearchParams,
-  auth?: HuggingFaceAuthOptions
+async function parseHuggingFaceModelListResponse(
+  response: Response
 ): Promise<HuggingFaceModelListPage> {
-  const response = await huggingFaceApiFetch(`?${params.toString()}`, undefined, auth);
+  if (response.status === 401 || response.status === 403) {
+    throw new HuggingFaceApiError(
+      "Hugging Face rejected the token — check Settings → Connection → Advanced keys.",
+      response.status
+    );
+  }
   if (!response.ok) return { models: [], nextUrl: null };
   const models = (await response.json()) as HuggingFaceModel[] | { error?: string };
   return {
@@ -326,17 +340,20 @@ async function fetchHuggingFaceModelList(
   };
 }
 
+async function fetchHuggingFaceModelList(
+  params: URLSearchParams,
+  auth?: HuggingFaceAuthOptions
+): Promise<HuggingFaceModelListPage> {
+  const response = await huggingFaceApiFetch(`?${params.toString()}`, undefined, auth);
+  return parseHuggingFaceModelListResponse(response);
+}
+
 export async function fetchHuggingFaceModelListPage(
   nextUrl: string,
   auth?: HuggingFaceAuthOptions
 ): Promise<HuggingFaceModelListPage> {
   const response = await huggingFaceApiFetchUrl(nextUrl, undefined, auth);
-  if (!response.ok) return { models: [], nextUrl: null };
-  const models = (await response.json()) as HuggingFaceModel[] | { error?: string };
-  return {
-    models: Array.isArray(models) ? models : [],
-    nextUrl: parseHuggingFaceLinkNextUrl(response.headers.get("Link")),
-  };
+  return parseHuggingFaceModelListResponse(response);
 }
 
 async function fetchHuggingFaceModelsByPipeline(

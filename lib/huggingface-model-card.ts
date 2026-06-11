@@ -1,3 +1,4 @@
+import { catalogIdToHuggingFaceRepoId } from "./catalog-hf-repo";
 import { isPlausibleCatalogModelId } from "./catalog-model-id";
 import { formatLibraryDownloadCount } from "./library-download-count";
 import { normalizeModelKey } from "./model-id";
@@ -31,6 +32,11 @@ export type HuggingFaceModel = {
 
 const hfEntryCache = new Map<string, RemoteLibraryEntry>();
 
+/** Drop cached model cards so the next fetch uses the current HF token. */
+export function clearHfEntryCache(): void {
+  hfEntryCache.clear();
+}
+
 function publisherFromModelId(modelId: string): string {
   const org = modelId.split("/")[0] ?? "";
   if (!org) return "Hugging Face";
@@ -42,7 +48,9 @@ export function huggingFaceRepoIdFromString(raw: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
 
-  if (isPlausibleCatalogModelId(trimmed)) return trimmed;
+  if (isPlausibleCatalogModelId(trimmed)) {
+    return catalogIdToHuggingFaceRepoId(trimmed) ?? trimmed;
+  }
 
   try {
     const resolved = resolveRemoteDownloadModelString(trimmed);

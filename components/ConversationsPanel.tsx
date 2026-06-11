@@ -3,21 +3,16 @@ import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import LottieView from "lottie-react-native";
 import React, { useCallback, useMemo, useRef, useState } from "react";
-import {
-  Animated,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { FlatList } from "react-native-gesture-handler";
-import Swipeable from "react-native-gesture-handler/Swipeable";
+import SwipeToDeleteRow from "./SwipeToDeleteRow";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import DismissAffordance from "./DismissAffordance";
 import NewChatIcon from "./NewChatIcon";
 import ThemedConfirmDialog from "./ThemedConfirmDialog";
 import { useApp } from "../lib/context";
 import { useHubNavigation } from "../lib/hub-navigation";
+import { screenHeaderTopPadding } from "../lib/safe-area-layout";
 import { createScreenHeaderTitleStyle } from "../lib/typography";
 import { AccentColors, getSettingsPalette, radii, ThemeColors, useTheme } from "../lib/theme";
 import { Conversation } from "../lib/types";
@@ -48,41 +43,11 @@ function ConversationRow({
   const { colors, accent, isDark } = useTheme();
   const palette = useMemo(() => getSettingsPalette(colors, isDark), [colors, isDark]);
   const styles = useMemo(() => createListStyles(palette, accent), [palette, accent]);
-  const swipeableRef = useRef<Swipeable>(null);
-
-  const renderLeftActions = (
-    _progress: Animated.AnimatedInterpolation<number>,
-    dragX: Animated.AnimatedInterpolation<number>
-  ) => {
-    const translateX = dragX.interpolate({
-      inputRange: [0, 72],
-      outputRange: [-72, 0],
-      extrapolate: "clamp",
-    });
-
-    return (
-      <Animated.View style={[styles.deleteAction, { transform: [{ translateX }] }]}>
-        <Pressable
-          style={styles.deleteActionPressable}
-          onPress={() => {
-            swipeableRef.current?.close();
-            onDelete();
-          }}
-          accessibilityLabel="Delete conversation"
-        >
-          <Ionicons name="trash-outline" size={22} color="#fff" />
-        </Pressable>
-      </Animated.View>
-    );
-  };
-
   return (
-    <Swipeable
-      ref={swipeableRef}
-      renderLeftActions={renderLeftActions}
-      overshootLeft={false}
-      friction={2}
-      leftThreshold={32}
+    <SwipeToDeleteRow
+      onDelete={onDelete}
+      deleteReveal="left"
+      backgroundColor={palette.bg}
     >
       <Pressable
         onPress={onPress}
@@ -99,7 +64,7 @@ function ConversationRow({
           <Text style={styles.rowDate}>{formatDate(item.updatedAt)}</Text>
         </View>
       </Pressable>
-    </Swipeable>
+    </SwipeToDeleteRow>
   );
 }
 
@@ -233,7 +198,7 @@ export default function ConversationsPanel() {
 
   return (
     <View style={styles.screen}>
-      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+      <View style={[styles.header, { paddingTop: screenHeaderTopPadding(insets.top) }]}>
         <View style={styles.headerBtn} />
         <Text style={styles.headerTitle}>Chats</Text>
         <DismissAffordance kind="right" colors={colors} onPress={openChat} />

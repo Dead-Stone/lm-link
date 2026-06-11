@@ -17,6 +17,7 @@
 
 import { File, Paths } from "expo-file-system";
 import { displayNameFromGgufFilename } from "./model-download-string";
+import { formatFileSize } from "./model-size";
 import {
   ModelCapabilityFilter,
   modelMatchesCapabilityFilter,
@@ -32,6 +33,7 @@ interface LlamaContextHandle {
   completion: (
     params: {
       messages: Array<{ role: string; content: string }>;
+      jinja?: boolean;
       n_predict?: number;
       temperature?: number;
       top_p?: number;
@@ -95,6 +97,8 @@ export interface LocalModelInfo {
   badgeColor: string;
   downloadUrl: string;
   filename: string;
+  /** Expected GGUF size on disk — used to reject partial downloads (not just HF error pages). */
+  minFileBytes: number;
 }
 
 export function localModelIdHaystack(model: LocalModelInfo): string {
@@ -133,6 +137,7 @@ export const LOCAL_MODEL_CATALOG: LocalModelInfo[] = [
     downloadUrl:
       "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf",
     filename: "llama-3.2-1b-q4_k_m.gguf",
+    minFileBytes: 743_000_000,
   },
   {
     key: "llama32_3b",
@@ -147,6 +152,7 @@ export const LOCAL_MODEL_CATALOG: LocalModelInfo[] = [
     downloadUrl:
       "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
     filename: "llama-3.2-3b-q4_k_m.gguf",
+    minFileBytes: 1_857_000_000,
   },
   {
     key: "llama31_8b",
@@ -161,6 +167,7 @@ export const LOCAL_MODEL_CATALOG: LocalModelInfo[] = [
     downloadUrl:
       "https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
     filename: "llama-3.1-8b-q4_k_m.gguf",
+    minFileBytes: 4_527_000_000,
   },
 
   // ── Google / Gemma ──────────────────────────────────────────────────────────
@@ -170,13 +177,14 @@ export const LOCAL_MODEL_CATALOG: LocalModelInfo[] = [
     provider: "Google",
     providerColor: "#a78bfa",
     description: "Google's newest tiny model. Punches above its weight.",
-    sizeLabel: "~600 MB",
+    sizeLabel: "~770 MB",
     ramLabel: "~1 GB RAM",
     badge: "New",
     badgeColor: "#a78bfa",
     downloadUrl:
-      "https://huggingface.co/bartowski/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf",
+      "https://huggingface.co/lmstudio-community/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf",
     filename: "gemma-3-1b-q4_k_m.gguf",
+    minFileBytes: 741_000_000,
   },
   {
     key: "gemma2_2b",
@@ -191,6 +199,7 @@ export const LOCAL_MODEL_CATALOG: LocalModelInfo[] = [
     downloadUrl:
       "https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf",
     filename: "gemma-2-2b-q4_k_m.gguf",
+    minFileBytes: 1_571_000_000,
   },
 
   // ── Microsoft / Phi ─────────────────────────────────────────────────────────
@@ -205,8 +214,9 @@ export const LOCAL_MODEL_CATALOG: LocalModelInfo[] = [
     badge: "New · Reasoning",
     badgeColor: "#f59e0b",
     downloadUrl:
-      "https://huggingface.co/bartowski/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q4_K_M.gguf",
+      "https://huggingface.co/lmstudio-community/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q4_K_M.gguf",
     filename: "phi-4-mini-q4_k_m.gguf",
+    minFileBytes: 2_292_000_000,
   },
   {
     key: "phi35_mini",
@@ -221,6 +231,7 @@ export const LOCAL_MODEL_CATALOG: LocalModelInfo[] = [
     downloadUrl:
       "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf",
     filename: "phi-3.5-mini-q4_k_m.gguf",
+    minFileBytes: 2_201_000_000,
   },
 
   // ── Qwen / Alibaba ──────────────────────────────────────────────────────────
@@ -237,6 +248,7 @@ export const LOCAL_MODEL_CATALOG: LocalModelInfo[] = [
     downloadUrl:
       "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
     filename: "qwen2.5-0.5b-q4_k_m.gguf",
+    minFileBytes: 452_000_000,
   },
   {
     key: "qwen25_1b5",
@@ -251,6 +263,7 @@ export const LOCAL_MODEL_CATALOG: LocalModelInfo[] = [
     downloadUrl:
       "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
     filename: "qwen2.5-1.5b-q4_k_m.gguf",
+    minFileBytes: 1_027_000_000,
   },
   {
     key: "qwen25_3b",
@@ -265,6 +278,7 @@ export const LOCAL_MODEL_CATALOG: LocalModelInfo[] = [
     downloadUrl:
       "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
     filename: "qwen2.5-3b-q4_k_m.gguf",
+    minFileBytes: 1_936_000_000,
   },
   {
     key: "qwen25_7b",
@@ -277,8 +291,9 @@ export const LOCAL_MODEL_CATALOG: LocalModelInfo[] = [
     badge: "STEM",
     badgeColor: "#dc2626",
     downloadUrl:
-      "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf",
+      "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf",
     filename: "qwen2.5-7b-q4_k_m.gguf",
+    minFileBytes: 4_308_000_000,
   },
 
   // ── Mistral AI ──────────────────────────────────────────────────────────────
@@ -295,6 +310,7 @@ export const LOCAL_MODEL_CATALOG: LocalModelInfo[] = [
     downloadUrl:
       "https://huggingface.co/bartowski/Mistral-7B-Instruct-v0.3-GGUF/resolve/main/Mistral-7B-Instruct-v0.3-Q4_K_M.gguf",
     filename: "mistral-7b-v0.3-q4_k_m.gguf",
+    minFileBytes: 4_022_000_000,
   },
 
   // ── DeepSeek ────────────────────────────────────────────────────────────────
@@ -311,6 +327,7 @@ export const LOCAL_MODEL_CATALOG: LocalModelInfo[] = [
     downloadUrl:
       "https://huggingface.co/bartowski/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
     filename: "deepseek-r1-1.5b-q4_k_m.gguf",
+    minFileBytes: 1_027_000_000,
   },
 
   // ── HuggingFace / SmolLM ────────────────────────────────────────────────────
@@ -327,6 +344,7 @@ export const LOCAL_MODEL_CATALOG: LocalModelInfo[] = [
     downloadUrl:
       "https://huggingface.co/bartowski/SmolLM2-1.7B-Instruct-GGUF/resolve/main/SmolLM2-1.7B-Instruct-Q4_K_M.gguf",
     filename: "smollm2-1.7b-q4_k_m.gguf",
+    minFileBytes: 971_000_000,
   },
 ];
 
@@ -377,7 +395,7 @@ export const QUICK_ACCESS_LOCAL_BY_CAPABILITY: Record<
   ],
 };
 
-export const QUICK_ACCESS_LIMIT = 10;
+export const QUICK_ACCESS_LIMIT = 5;
 
 function localQuickAccessMatches(model: LocalModelInfo, capability: ModelCapabilityFilter): boolean {
   if (capability === "all") return true;
@@ -441,7 +459,59 @@ export function getLocalModelByKey(key: string | null | undefined): LocalModelIn
     badgeColor: "#888888",
     downloadUrl: "",
     filename,
+    minFileBytes: MIN_GGUF_MODEL_BYTES,
   };
+}
+
+export function findLocalCatalogByFilename(filename: string): LocalModelInfo | undefined {
+  return LOCAL_MODEL_CATALOG.find((model) => model.filename === filename);
+}
+
+export function resolveMinFileBytesForFilename(filename: string): number {
+  return findLocalCatalogByFilename(filename)?.minFileBytes ?? MIN_GGUF_MODEL_BYTES;
+}
+
+export function formatOnDeviceLoadError(message: string, model?: LocalModelInfo | null): string {
+  const lower = message.toLowerCase();
+  const hay = `${lower} ${model?.key ?? ""} ${model?.name ?? ""}`.toLowerCase();
+
+  if (
+    model &&
+    modelFile(model.filename).exists &&
+    modelFileSize(model.filename) < model.minFileBytes
+  ) {
+    return (
+      `${model.name} download looks incomplete (${formatFileSize(modelFileSize(model.filename))} of ~${model.sizeLabel.replace(/^~\s*/, "")}). ` +
+      "Delete it in Model Library and download again on Wi‑Fi."
+    );
+  }
+
+  if (
+    /unknown model architecture.*gemma3|gemma3.*unknown|architecture.*gemma3/.test(lower) ||
+    (/unknown model architecture|unsupported architecture|failed to load/i.test(lower) &&
+      /gemma[-_]?3/.test(hay))
+  ) {
+    return (
+      "Gemma 3 needs a newer app build with updated on-device inference. " +
+      "Update LM Link, or use Remote mode with LM Studio on your Mac."
+    );
+  }
+
+  if (/out of memory|oom|cannot allocate|alloc tensor failed/i.test(lower)) {
+    return (
+      `Not enough free RAM to load ${model?.name ?? "this model"}. ` +
+      "Close other apps, pick a smaller model, or use Remote mode."
+    );
+  }
+
+  if (/failed to load model|corrupt|invalid gguf|tensor.*incomplete/i.test(lower)) {
+    return (
+      `${model?.name ?? "Model"} file may be corrupted or incomplete. ` +
+      "Delete it in Model Library and download again."
+    );
+  }
+
+  return message;
 }
 
 // ─── File helpers (expo-file-system v4) ───────────────────────────────────────
@@ -450,12 +520,60 @@ export function modelFile(filename: string): File {
   return new File(Paths.document, filename);
 }
 
-export function isModelDownloaded(filename: string): boolean {
+/** Reject HF error pages and truncated downloads (smallest catalog model is ~400 MB). */
+export const MIN_GGUF_MODEL_BYTES = 5 * 1024 * 1024;
+
+const GGUF_MAGIC = [0x47, 0x47, 0x55, 0x46] as const; // "GGUF"
+
+function hasGgufHeader(file: File): boolean {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const handle = file.open();
+      try {
+        const header = handle.readBytes(4);
+        if (GGUF_MAGIC.every((byte, index) => header[index] === byte)) {
+          return true;
+        }
+      } finally {
+        handle.close();
+      }
+    } catch {
+      /* retry after a brief filesystem flush */
+    }
+  }
+  return false;
+}
+
+/** True when a complete, valid GGUF file is on disk (not a partial or HTML error page). */
+export function isValidModelFileOnDisk(filename: string): boolean {
   try {
-    return modelFile(filename).exists;
+    const file = modelFile(filename);
+    if (!file.exists) return false;
+    const minBytes = resolveMinFileBytesForFilename(filename);
+    if (file.size < minBytes) return false;
+    return hasGgufHeader(file);
   } catch {
     return false;
   }
+}
+
+export function isModelDownloaded(filename: string): boolean {
+  return isValidModelFileOnDisk(filename);
+}
+
+/** Fast downloads can finish before the filesystem reports the file — poll briefly. */
+export async function waitForValidModelFileOnDisk(
+  filename: string,
+  opts?: { maxMs?: number; intervalMs?: number }
+): Promise<boolean> {
+  const maxMs = opts?.maxMs ?? 10_000;
+  const intervalMs = opts?.intervalMs ?? 80;
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline) {
+    if (isValidModelFileOnDisk(filename)) return true;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return isValidModelFileOnDisk(filename);
 }
 
 export function deleteModelFile(filename: string): void {
@@ -516,15 +634,42 @@ function resolveModelPath(file: File): string {
   return uri.startsWith("file://") ? uri.slice(7) : uri;
 }
 
+type OnDeviceModelLoadedListener = (modelKey: string) => void;
+type OnDeviceModelLoadFailedListener = (modelKey: string) => void;
+
 class LlamaContextManager {
   private _ctx: LlamaContextHandle | null = null;
   private _loadedKey: string | null = null;
   // Key currently being loaded (used to detect race when model changes mid-load)
   private _loadingKey: string | null = null;
   private _loadPromise: Promise<LlamaContextHandle> | null = null;
+  private _loadedListeners = new Set<OnDeviceModelLoadedListener>();
+  private _loadFailedListeners = new Set<OnDeviceModelLoadFailedListener>();
 
   get loadedKey(): string | null {
     return this._loadedKey;
+  }
+
+  subscribeModelLoaded(listener: OnDeviceModelLoadedListener): () => void {
+    this._loadedListeners.add(listener);
+    return () => this._loadedListeners.delete(listener);
+  }
+
+  subscribeModelLoadFailed(listener: OnDeviceModelLoadFailedListener): () => void {
+    this._loadFailedListeners.add(listener);
+    return () => this._loadFailedListeners.delete(listener);
+  }
+
+  private notifyModelLoaded(modelKey: string) {
+    for (const listener of this._loadedListeners) {
+      listener(modelKey);
+    }
+  }
+
+  private notifyModelLoadFailed(modelKey: string) {
+    for (const listener of this._loadFailedListeners) {
+      listener(modelKey);
+    }
   }
 
   /** Returns the active context, or null if nothing is loaded. */
@@ -558,7 +703,7 @@ class LlamaContextManager {
       const old = this._ctx;
       this._ctx = null;
       this._loadedKey = null;
-      await old.release().catch(() => {});
+      await old.release()?.catch(() => {});
     }
 
     const promise = this._doLoad(modelKey, filePath, onProgress);
@@ -568,17 +713,19 @@ class LlamaContextManager {
       const ctx = await promise;
       // If model changed while we were loading, discard this result
       if (this._loadingKey !== modelKey) {
-        ctx.release().catch(() => {});
+        ctx.release()?.catch(() => {});
         throw new Error("Load superseded by another model request.");
       }
       this._ctx = ctx;
       this._loadedKey = modelKey;
       this._loadPromise = null;
+      this.notifyModelLoaded(modelKey);
       return ctx;
     } catch (e) {
       if (this._loadingKey === modelKey) {
         this._loadPromise = null;
         this._loadingKey = null;
+        this.notifyModelLoadFailed(modelKey);
       }
       throw e;
     }
@@ -628,7 +775,7 @@ class LlamaContextManager {
       const old = this._ctx;
       this._ctx = null;
       this._loadedKey = null;
-      await old.release().catch(() => {});
+      await old.release()?.catch(() => {});
     }
   }
 }
@@ -638,6 +785,86 @@ export const llamaManager = new LlamaContextManager();
 
 export function getLoadedOnDeviceModelKey(): string | null {
   return llamaManager.loadedKey;
+}
+
+export function isOnDeviceModelLoaded(modelKey: string): boolean {
+  return llamaManager.loadedKey === modelKey && llamaManager.context() != null;
+}
+
+export function subscribeOnDeviceModelLoaded(
+  listener: OnDeviceModelLoadedListener
+): () => void {
+  return llamaManager.subscribeModelLoaded(listener);
+}
+
+export function subscribeOnDeviceModelLoadFailed(
+  listener: OnDeviceModelLoadFailedListener
+): () => void {
+  return llamaManager.subscribeModelLoadFailed(listener);
+}
+
+/** Wait until llama.rn has finished loading the given on-device model. */
+export async function waitForOnDeviceModelLoaded(
+  modelKey: string,
+  options?: { timeoutMs?: number; intervalMs?: number }
+): Promise<boolean> {
+  if (isOnDeviceModelLoaded(modelKey)) return true;
+
+  const timeoutMs = options?.timeoutMs ?? 120_000;
+  const intervalMs = options?.intervalMs ?? 80;
+  const deadline = Date.now() + timeoutMs;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(pollId);
+      unsubscribeLoaded();
+      unsubscribeFailed();
+      resolve(ok);
+    };
+
+    const unsubscribeLoaded = subscribeOnDeviceModelLoaded((key) => {
+      if (key === modelKey) finish(true);
+    });
+
+    const unsubscribeFailed = subscribeOnDeviceModelLoadFailed((key) => {
+      if (key === modelKey) finish(false);
+    });
+
+    const pollId = setInterval(() => {
+      if (isOnDeviceModelLoaded(modelKey)) {
+        finish(true);
+        return;
+      }
+      if (Date.now() >= deadline) {
+        finish(isOnDeviceModelLoaded(modelKey));
+      }
+    }, intervalMs);
+  });
+}
+
+export async function preloadOnDeviceModel(
+  modelKey: string,
+  onProgress?: (progress: number) => void
+): Promise<boolean> {
+  if (IS_EXPO_GO) return false;
+  if (isOnDeviceModelLoaded(modelKey)) {
+    onProgress?.(1);
+    return true;
+  }
+
+  const modelInfo = getLocalModelByKey(modelKey);
+  if (!modelInfo || !isValidModelFileOnDisk(modelInfo.filename)) return false;
+
+  try {
+    const file = modelFile(modelInfo.filename);
+    await llamaManager.load(modelKey, resolveModelPath(file), onProgress);
+    return isOnDeviceModelLoaded(modelKey);
+  } catch {
+    return false;
+  }
 }
 
 export async function ejectOnDeviceModel(modelKey: string): Promise<void> {
@@ -726,6 +953,19 @@ export function useOnDeviceLLM(
     responseBufferRef.current = "";
   }, []);
 
+  // Stop generation and cancel the rAF drain loop if the screen unmounts mid-stream.
+  useEffect(
+    () => () => {
+      abortRef.current = true;
+      if (responseFrameRef.current !== null) {
+        cancelAnimationFrame(responseFrameRef.current);
+        responseFrameRef.current = null;
+      }
+      llamaManager.context()?.stopCompletion()?.catch(() => {});
+    },
+    []
+  );
+
   // Load / unload via the global manager
   useEffect(() => {
     if (IS_EXPO_GO) return;
@@ -755,14 +995,24 @@ export function useOnDeviceLLM(
       setLoadProgress(0);
       setError(null);
 
-      const file = modelFile(modelInfo!.filename);
-      if (!file.exists) {
+      if (!isValidModelFileOnDisk(modelInfo!.filename)) {
         if (!cancelled) {
-          setError("Model not downloaded. Download it in Settings → Local Models.");
+          const partialBytes = modelFileSize(modelInfo!.filename);
+          if (partialBytes > MIN_GGUF_MODEL_BYTES) {
+            deleteModelFile(modelInfo!.filename);
+          }
+          setError(
+            formatOnDeviceLoadError(
+              "Model not downloaded or file is incomplete.",
+              modelInfo
+            )
+          );
           setIsLoading(false);
         }
         return;
       }
+
+      const file = modelFile(modelInfo!.filename);
 
       try {
         await llamaManager.load(modelKey!, resolveModelPath(file), (p) => {
@@ -776,7 +1026,8 @@ export function useOnDeviceLLM(
         }
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Failed to load model");
+          const raw = e instanceof Error ? e.message : "Failed to load model";
+          setError(formatOnDeviceLoadError(raw, modelInfo));
           setIsLoading(false);
           setLoadProgress(0);
         }
@@ -784,7 +1035,10 @@ export function useOnDeviceLLM(
     }
 
     load();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      setIsLoading(false);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, modelKey]);
 
@@ -820,9 +1074,11 @@ export function useOnDeviceLLM(
       };
 
       const run = async (payload: Array<{ role: string; content: string }>) => {
+        const useJinja = (modelKey ?? "").toLowerCase().includes("gemma");
         const result = await ctx.completion(
           {
             messages: payload.filter((m) => m.role === "user" || m.role === "assistant"),
+            jinja: useJinja,
             n_predict: 1024,
             temperature: 0.7,
             top_p: 0.95,
@@ -871,7 +1127,7 @@ export function useOnDeviceLLM(
 
   const interrupt = useCallback(() => {
     abortRef.current = true;
-    llamaManager.context()?.stopCompletion().catch(() => {});
+    llamaManager.context()?.stopCompletion()?.catch(() => {});
     flushResponseBuffer();
     setIsGenerating(false);
   }, [flushResponseBuffer]);

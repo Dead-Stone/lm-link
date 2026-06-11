@@ -5,9 +5,10 @@ import { SharedValue } from "react-native-reanimated";
 export type HubPage = 0 | 1 | 2;
 
 export const HUB_SPRING = {
-  damping: 28,
-  stiffness: 300,
-  mass: 0.88,
+  damping: 30,
+  stiffness: 240,
+  mass: 0.86,
+  overshootClamping: false,
 } as const;
 
 type HubNavigationContextValue = {
@@ -74,10 +75,10 @@ export function snapHubPage(offset: number, screenWidth: number, velocityX: numb
   "worklet";
   const raw = -offset / screenWidth;
   let target = Math.round(raw);
-  if (velocityX > 720) {
-    target = Math.floor(raw + 0.12);
-  } else if (velocityX < -720) {
-    target = Math.ceil(raw - 0.15);
+  if (velocityX > 520) {
+    target = Math.floor(raw + 0.1);
+  } else if (velocityX < -520) {
+    target = Math.ceil(raw - 0.12);
   }
   return Math.max(0, Math.min(2, target)) as HubPage;
 }

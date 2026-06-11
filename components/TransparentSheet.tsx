@@ -1,6 +1,12 @@
 import { BlurView } from "expo-blur";
-import React from "react";
+import React, { useEffect } from "react";
 import { Platform, StyleProp, StyleSheet, View, ViewStyle } from "react-native";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
+import { GESTURE_TIMING_ENTER } from "../lib/gesture-motion";
 import { useTheme } from "../lib/theme";
 
 const blurProps =
@@ -18,9 +24,18 @@ export default function TransparentSheet({ children, style }: Props) {
   const { isDark } = useTheme();
   const frostedTint = isDark ? "rgba(12, 12, 12, 0.42)" : "rgba(255, 255, 255, 0.52)";
   const fallbackBg = isDark ? "rgba(12, 12, 12, 0.9)" : "rgba(255, 255, 255, 0.94)";
+  const enterOpacity = useSharedValue(0);
+
+  useEffect(() => {
+    enterOpacity.value = withTiming(1, GESTURE_TIMING_ENTER);
+  }, [enterOpacity]);
+
+  const shellStyle = useAnimatedStyle(() => ({
+    opacity: enterOpacity.value,
+  }));
 
   return (
-    <View style={[styles.root, style]}>
+    <Animated.View style={[styles.root, style, shellStyle]}>
       {Platform.OS !== "web" ? (
         <BlurView
           intensity={isDark ? 48 : 58}
@@ -36,7 +51,7 @@ export default function TransparentSheet({ children, style }: Props) {
         style={[StyleSheet.absoluteFillObject, { backgroundColor: frostedTint }]}
       />
       <View style={styles.content}>{children}</View>
-    </View>
+    </Animated.View>
   );
 }
 

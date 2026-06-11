@@ -3,6 +3,7 @@ import React, { memo, useMemo } from "react";
 import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import NewChatIcon from "../NewChatIcon";
 import { createScreenHeaderTitleStyle } from "../../lib/typography";
+import { screenHeaderTopPadding } from "../../lib/safe-area-layout";
 import { ThemeColors, useTheme } from "../../lib/theme";
 
 type Props = {
@@ -12,6 +13,7 @@ type Props = {
   onOpenConversations: () => void;
   onNewChat: () => void;
   onOpenSettings: () => void;
+  newChatDisabled?: boolean;
 };
 
 function ChatHeader({
@@ -21,13 +23,14 @@ function ChatHeader({
   onOpenConversations,
   onNewChat,
   onOpenSettings,
+  newChatDisabled = false,
 }: Props) {
   const { isDark } = useTheme();
   const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
   const titleStyle = createScreenHeaderTitleStyle(colors, "left");
 
   return (
-    <View style={[styles.header, { paddingTop: paddingTop + 8, zIndex: 2 }]}>
+    <View style={[styles.header, { paddingTop: screenHeaderTopPadding(paddingTop), zIndex: 2 }]}>
       <View style={styles.headerTop}>
         <View style={[styles.headerLeading, styles.headerIconChip]}>
           <Pressable
@@ -44,14 +47,20 @@ function ChatHeader({
           <View style={styles.headerLeadingDivider} />
           <Pressable
             onPress={onNewChat}
+            disabled={newChatDisabled}
             style={({ pressed }) => [
               styles.headerLeadingBtn,
-              pressed && styles.headerLeadingBtnPressed,
+              newChatDisabled && styles.headerLeadingBtnDisabled,
+              pressed && !newChatDisabled && styles.headerLeadingBtnPressed,
             ]}
             hitSlop={8}
             accessibilityLabel="New chat"
+            accessibilityState={{ disabled: newChatDisabled }}
           >
-            <NewChatIcon size={22} color={colors.primaryLight} />
+            <NewChatIcon
+              size={22}
+              color={newChatDisabled ? colors.textDim : colors.primaryLight}
+            />
           </Pressable>
         </View>
 
@@ -116,6 +125,9 @@ function createStyles(colors: ThemeColors, isDark: boolean) {
     },
     headerLeadingBtnPressed: {
       backgroundColor: colors.surfaceHover,
+    },
+    headerLeadingBtnDisabled: {
+      opacity: 0.42,
     },
     headerLeadingDivider: {
       width: StyleSheet.hairlineWidth,

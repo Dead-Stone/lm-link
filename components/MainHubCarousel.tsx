@@ -7,6 +7,7 @@ import Animated, {
   useSharedValue,
   withSpring,
 } from "react-native-reanimated";
+import { rubberBandClamp } from "../lib/gesture-motion";
 import {
   HUB_SPRING,
   HubNavigationProvider,
@@ -18,7 +19,7 @@ import { useTheme } from "../lib/theme";
 import ConversationsPanel from "./ConversationsPanel";
 import SettingsPanel from "./SettingsPanel";
 
-const ACTIVATION_DISTANCE = 14;
+const ACTIVATION_DISTANCE = 10;
 
 type Props = {
   children: React.ReactNode;
@@ -97,6 +98,7 @@ export default function MainHubCarousel({ children }: Props) {
       Gesture.Pan()
         .manualActivation(true)
         .onTouchesDown((event) => {
+          "worklet";
           const touch = event.allTouches[0];
           if (touch) {
             touchStartX.value = touch.x;
@@ -104,6 +106,7 @@ export default function MainHubCarousel({ children }: Props) {
           }
         })
         .onTouchesMove((event, state) => {
+          "worklet";
           if (!gestureEnabled.value) {
             state.fail();
             return;
@@ -129,25 +132,30 @@ export default function MainHubCarousel({ children }: Props) {
           }
         })
         .onTouchesUp((_event, state) => {
+          "worklet";
           if (!gestureActivated.value) {
             state.fail();
           }
         })
         .onFinalize(() => {
+          "worklet";
           gestureActivated.value = false;
         })
         .onBegin(() => {
+          "worklet";
           dragStartOffset.value = offsetX.value;
         })
         .onUpdate((event) => {
+          "worklet";
           const w = screenWidth.value;
           if (w <= 0) return;
           const next = dragStartOffset.value + event.translationX;
           const min = hubPageOffset(2, w);
           const max = hubPageOffset(0, w);
-          offsetX.value = Math.max(min, Math.min(max, next));
+          offsetX.value = rubberBandClamp(next, min, max);
         })
         .onEnd((event) => {
+          "worklet";
           const w = screenWidth.value;
           if (w <= 0) return;
           const target = snapHubPage(offsetX.value, w, event.velocityX);

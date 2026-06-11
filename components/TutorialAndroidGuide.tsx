@@ -1,6 +1,13 @@
-import React, { useCallback, useMemo, useState } from "react";
-import { LayoutChangeEvent, StyleSheet, Text, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { LayoutChangeEvent, StyleProp, StyleSheet, Text, TextStyle, View } from "react-native";
 import Svg, { Path } from "react-native-svg";
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withTiming,
+} from "react-native-reanimated";
 import { ThemeColors } from "../lib/theme";
 import AndroidGuideSprite from "./AndroidGuideSprite";
 import { TutorialTypingText } from "./TutorialMockText";
@@ -59,10 +66,15 @@ function TutorialSpeechBubble({
   children,
   fill,
   stroke,
+  measureText,
+  measureStyle,
 }: {
   children: React.ReactNode;
   fill: string;
   stroke: string;
+  /** Pre-size bubble from full copy — avoids relayout on every typed character. */
+  measureText?: string;
+  measureStyle?: StyleProp<TextStyle>;
 }) {
   const [bodySize, setBodySize] = useState({ width: 0, height: 0 });
 
@@ -80,6 +92,13 @@ function TutorialSpeechBubble({
 
   return (
     <View style={styles.bubbleShell}>
+      {measureText && measureStyle ? (
+        <View pointerEvents="none" style={styles.bubbleMeasureWrap}>
+          <View style={styles.bubbleContent} onLayout={onContentLayout}>
+            <Text style={measureStyle}>{measureText}</Text>
+          </View>
+        </View>
+      ) : null}
       {path ? (
         <Svg
           width={svgWidth}
@@ -91,8 +110,11 @@ function TutorialSpeechBubble({
         </Svg>
       ) : null}
       <View
-        style={styles.bubbleContent}
-        onLayout={onContentLayout}
+        style={[
+          styles.bubbleContent,
+          bodySize.height > 0 ? { minHeight: bodySize.height } : null,
+        ]}
+        onLayout={measureText ? undefined : onContentLayout}
       >
         {children}
       </View>
@@ -112,23 +134,53 @@ export default function TutorialAndroidGuide({
   const styles = useMemo(() => createWalkStyles(colors), [colors]);
   const bubbleFill = isDark ? colors.surface : colors.bgElevated;
   const spriteStepKey = active ? stepKey : -1;
-  const typingDelay = emergeFromBottom && active ? 540 : 120;
+  const typingDelay = emergeFromBottom && active ? 380 : 70;
+  const bubbleLift = useSharedValue(emergeFromBottom && active ? 14 : 8);
+  const bubbleOpacity = useSharedValue(0);
+
+  useEffect(() => {
+    if (!active) {
+      bubbleOpacity.value = 0;
+      bubbleLift.value = 8;
+      return;
+    }
+    bubbleLift.value = emergeFromBottom ? 14 : 8;
+    bubbleOpacity.value = 0;
+    bubbleOpacity.value = withDelay(
+      typingDelay * 0.35,
+      withTiming(1, { duration: 340, easing: Easing.out(Easing.cubic) })
+    );
+    bubbleLift.value = withDelay(
+      typingDelay * 0.35,
+      withTiming(0, { duration: 420, easing: Easing.out(Easing.cubic) })
+    );
+  }, [active, emergeFromBottom, typingDelay, bubbleLift, bubbleOpacity]);
+
+  const bubbleStyle = useAnimatedStyle(() => ({
+    opacity: bubbleOpacity.value,
+    transform: [{ translateY: bubbleLift.value }],
+  }));
 
   return (
     <View style={styles.compose}>
-      <View style={styles.bubbleRow}>
+      <Animated.View style={[styles.bubbleRow, bubbleStyle]}>
         <View style={styles.headSpacer} />
-        <TutorialSpeechBubble fill={bubbleFill} stroke={colors.border}>
+        <TutorialSpeechBubble
+          fill={bubbleFill}
+          stroke={colors.border}
+          measureText={walk}
+          measureStyle={styles.walk}
+        >
           <TutorialTypingText
             text={walk}
             style={styles.walk}
             replayKey={stepKey}
             active={active}
             delay={typingDelay}
-            charMs={18}
+            charMs={13}
           />
         </TutorialSpeechBubble>
-      </View>
+      </Animated.View>
       <View style={[styles.headRow, emergeFromBottom && styles.headRowEmergeClip]}>
         <AndroidGuideSprite
           size={TUTORIAL_SPRITE_SIZE}
@@ -144,9 +196,41 @@ export default function TutorialAndroidGuide({
 }
 
 /** Pinned tip at the bottom of each tutorial slide. */
-export function TutorialSlideNote({ help, colors }: NoteProps) {
+export function TutorialSlideNote({
+  help,
+  colors,
+  active = true,
+}: NoteProps & { active?: boolean }) {
   const styles = useMemo(() => createNoteStyles(colors), [colors]);
-  return <Text style={styles.noteText}>{help}</Text>;
+  const opacity = useSharedValue(0);
+  const translateY = useSharedValue(6);
+
+  useEffect(() => {
+    if (!active) {
+      opacity.value = 0;
+      translateY.value = 6;
+      return;
+    }
+    opacity.value = 0;
+    translateY.value = 8;
+    opacity.value = withDelay(
+      120,
+      withTiming(1, { duration: 360, easing: Easing.out(Easing.cubic) })
+    );
+    translateY.value = withDelay(
+      120,
+      withTiming(0, { duration: 400, easing: Easing.out(Easing.cubic) })
+    );
+  }, [active, help, opacity, translateY]);
+
+  const noteStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [{ translateY: translateY.value }],
+  }));
+
+  return (
+    <Animated.Text style={[styles.noteText, noteStyle]}>{help}</Animated.Text>
+  );
 }
 
 const styles = StyleSheet.create({
@@ -166,6 +250,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: BUBBLE_PAD_H,
     paddingVertical: BUBBLE_PAD_V,
     alignSelf: "stretch",
+  },
+  bubbleMeasureWrap: {
+    position: "absolute",
+    opacity: 0,
+    left: 0,
+    right: 0,
+    top: 0,
   },
 });
 

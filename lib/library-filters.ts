@@ -1,6 +1,10 @@
 import { resolveLibraryEntryDownloadSource } from "./library-entry-downloads";
 import { LibraryBrowseItem } from "./library-browse-list";
-import { findCuratedRemoteLibraryEntry, LibraryDownloadSource } from "./remote-model-library";
+import {
+  findCuratedRemoteLibraryEntry,
+  LibraryDownloadSource,
+  resolveRemoteEntryDownloadSource,
+} from "./remote-model-library";
 import { ModelBrandKey, resolveModelBrandKey } from "./model-provider-logos";
 import { localModelIdHaystack } from "./local-models";
 import {
@@ -70,6 +74,21 @@ export function libraryBrowseFiltersActive(filters: LibraryBrowseFilters): boole
     filters.provider !== "all" ||
     filters.capability !== "all"
   );
+}
+
+export const CATALOG_SOURCE_LABELS: Record<LibraryDownloadSource, string> = {
+  lmstudio: "LM Studio",
+  huggingface: "Hugging Face",
+};
+
+export function catalogSourceLabel(source: LibraryDownloadSource): string {
+  return CATALOG_SOURCE_LABELS[source];
+}
+
+export function resolveInstalledRemoteCatalogSource(modelId: string): LibraryDownloadSource {
+  const curated = findCuratedRemoteLibraryEntry(modelId);
+  if (curated) return inferRemoteEntryDownloadSource(curated);
+  return resolveRemoteEntryDownloadSource({ id: modelId });
 }
 
 export function resolveEntryCatalogSource(

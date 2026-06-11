@@ -1,0 +1,416 @@
+import { StyleSheet } from "react-native";
+import { radii, ThemeColors } from "../lib/theme";
+import { createScreenHeaderTitleStyle } from "../lib/typography";
+
+const SETTINGS_SUBTEXT = {
+  fontSize: 12,
+  lineHeight: 16,
+} as const;
+
+export function createConnPanelStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+  body: { paddingHorizontal: 14, paddingTop: 8, paddingBottom: 10 },
+  statusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 8,
+  },
+  statusCopy: { flex: 1, minWidth: 0, gap: 1 },
+  statusTitle: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "600",
+    letterSpacing: -0.1,
+  },
+  statusSubtitle: {
+    color: colors.textMuted,
+    ...SETTINGS_SUBTEXT,
+  },
+  statusIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    position: "relative",
+  },
+  statusIconConnected: {
+    backgroundColor: "rgba(46, 125, 50, 0.12)",
+  },
+  statusIconDisconnected: {
+    backgroundColor: "rgba(220, 38, 38, 0.1)",
+  },
+  statusIconEmpty: {
+    backgroundColor: colors.surfaceHover,
+  },
+  statusIconNeutral: {
+    backgroundColor: colors.surfaceHover,
+  },
+  summaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 4,
+    marginBottom: 4,
+  },
+  summaryCopy: { flex: 1, minWidth: 0, gap: 1 },
+  summaryName: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "600",
+    letterSpacing: -0.15,
+  },
+  summaryUrl: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontFamily: "Courier",
+  },
+  desc: {
+    color: colors.textMuted,
+    ...SETTINGS_SUBTEXT,
+    marginBottom: 10,
+    marginTop: 6,
+  },
+  fieldBlock: {
+    marginBottom: 8,
+  },
+  fieldLabel: {
+    color: colors.textMuted,
+    ...SETTINGS_SUBTEXT,
+    fontWeight: "500",
+    marginBottom: 4,
+  },
+  fieldInput: {
+    color: colors.inputText,
+    fontSize: 15,
+    lineHeight: 22,
+    paddingVertical: 4,
+    paddingHorizontal: 0,
+    margin: 0,
+  },
+  fieldInputMono: {
+    fontFamily: "Courier",
+    fontSize: 13,
+  },
+  optionsGroup: {
+    gap: 2,
+    marginTop: 2,
+    marginBottom: 2,
+  },
+  optionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 8,
+  },
+  optionPressed: { opacity: 0.65 },
+  optionLabel: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  actionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 8,
+  },
+  secondaryBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: colors.surfaceHover,
+    borderRadius: radii.sm,
+    paddingVertical: 10,
+  },
+  secondaryBtnText: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  advancedBlock: {
+    marginTop: 2,
+    marginBottom: 4,
+    gap: 6,
+  },
+  advancedHint: {
+    color: colors.textDim,
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  advancedHintSpaced: {
+    marginTop: 8,
+  },
+  advancedInputWrap: {
+    position: "relative",
+    paddingRight: 32,
+  },
+  advancedInput: {
+    paddingRight: 0,
+  },
+  advancedInputPlain: {
+    fontFamily: undefined,
+  },
+  advancedEye: {
+    position: "absolute",
+    right: 10,
+    top: 0,
+    bottom: 0,
+    justifyContent: "center",
+  },
+  advancedError: {
+    color: colors.error,
+    fontSize: 12,
+    marginTop: 8,
+    lineHeight: 16,
+  },
+  saveBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: colors.primary,
+    borderRadius: radii.sm,
+    paddingVertical: 10,
+  },
+  saveBtnText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  btnDisabled: { opacity: 0.45 },
+  });
+}
+
+export function createMainStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.bg },
+  topBar: {
+    paddingBottom: 10,
+    paddingHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  topBarBtn: { width: 36, alignItems: "center", justifyContent: "center" },
+  topBarTitle: createScreenHeaderTitleStyle(colors),
+  scroll: { paddingHorizontal: 16 },
+  creatorFooter: {
+    marginTop: 2,
+    overflow: "visible",
+  },
+
+  section: { marginBottom: 14 },
+  sectionTitle: {
+    color: colors.textDim,
+    ...SETTINGS_SUBTEXT,
+    fontWeight: "600",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+    marginBottom: 4,
+    paddingHorizontal: 4,
+  },
+  group: {
+    backgroundColor: colors.bgElevated,
+    borderRadius: radii.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    overflow: "hidden",
+  },
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+    marginLeft: 14,
+  },
+
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  rowBody: { flex: 1, minWidth: 0 },
+  rowLabel: { color: colors.text, fontSize: 15, fontWeight: "500" },
+  rowValue: { color: colors.textMuted, ...SETTINGS_SUBTEXT, marginTop: 2 },
+  rowValueMuted: { color: colors.textDim },
+  modelSummaryRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 2,
+  },
+  modelSummaryItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    flexShrink: 1,
+    maxWidth: "100%",
+  },
+  modelSummaryText: {
+    color: colors.textMuted,
+    ...SETTINGS_SUBTEXT,
+    flexShrink: 1,
+  },
+  modelSummarySep: {
+    color: colors.textDim,
+    ...SETTINGS_SUBTEXT,
+  },
+
+  urlLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+    paddingHorizontal: 16,
+  },
+  fieldLabel: { color: colors.textMuted, ...SETTINGS_SUBTEXT },
+  helperBtn: { flexDirection: "row", alignItems: "center", gap: 4 },
+  helperBtnText: { color: colors.primaryLight, ...SETTINGS_SUBTEXT, fontWeight: "500" },
+
+  urlInputRow: {
+    backgroundColor: colors.surfaceHover,
+    borderRadius: radii.md,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginHorizontal: 16,
+    marginBottom: 8,
+  },
+  urlInput: { color: colors.inputText, fontSize: 14, fontFamily: "Courier" },
+
+  mono: { fontFamily: "Courier", color: colors.textMuted },
+  monoBlue: { fontFamily: "Courier", color: colors.primaryLight },
+
+  connResultOk: {
+    color: "#22c55e",
+    fontSize: 12,
+    fontWeight: "600",
+    lineHeight: 16,
+    marginTop: 6,
+  },
+  connResultError: {
+    color: colors.error,
+    fontSize: 12,
+    fontWeight: "600",
+    lineHeight: 16,
+    marginTop: 6,
+  },
+  connResultDebug: {
+    color: colors.textDim,
+    fontSize: 11,
+    lineHeight: 15,
+    fontFamily: "Courier",
+    marginTop: 4,
+    paddingHorizontal: 16,
+  },
+
+  genParamRow: { paddingHorizontal: 14, paddingVertical: 11, gap: 8 },
+  genParamHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  genParamTitleWrap: { flexDirection: "row", alignItems: "flex-start", gap: 10, flex: 1 },
+  genParamTitleBody: { flex: 1, minWidth: 0, gap: 2 },
+  genParamHint: { color: colors.textMuted, ...SETTINGS_SUBTEXT },
+  genValueTap: {
+    flexShrink: 0,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+  },
+  genValueTapPressed: { opacity: 0.65 },
+  genValueText: { color: colors.primaryLight, fontSize: 16, fontWeight: "700" },
+  genSliderWrap: {
+    position: "relative",
+    height: 36,
+    justifyContent: "center",
+    paddingVertical: 6,
+  },
+  track: {
+    height: 6,
+    backgroundColor: colors.borderStrong,
+    borderRadius: 3,
+    overflow: "hidden",
+    position: "relative",
+  },
+  fill: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    borderRadius: 3,
+    backgroundColor: colors.primary,
+  },
+  genThumb: {
+    position: "absolute",
+    width: 22,
+    height: 22,
+    marginLeft: -11,
+    top: 7,
+    borderRadius: 11,
+    backgroundColor: colors.primaryLight,
+    borderWidth: 3,
+    borderColor: colors.bg,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  genEditInput: {
+    color: colors.inputText,
+    fontSize: 28,
+    fontWeight: "700",
+    textAlign: "center",
+    paddingVertical: 12,
+    borderRadius: radii.md,
+    backgroundColor: colors.surfaceHover,
+  },
+  sliderBounds: { flexDirection: "row", justifyContent: "space-between" },
+  bound: { color: colors.textDim, ...SETTINGS_SUBTEXT },
+
+  promptBlock: {
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 12,
+    gap: 10,
+  },
+  promptLabelRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  promptInput: {
+    color: colors.inputText,
+    fontSize: 14,
+    lineHeight: 22,
+    minHeight: 80,
+    textAlignVertical: "top",
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: radii.sm,
+    backgroundColor: colors.surfaceHover,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  switchRow: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  switchLabel: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
+  switchSub: { color: colors.textMuted, ...SETTINGS_SUBTEXT, marginTop: 2 },
+  });
+}

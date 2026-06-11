@@ -1,40 +1,52 @@
-import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Easing, Image, StyleSheet, Text, View } from "react-native";
 import { APP_BRAND_TITLE, APP_BRAND_TITLE_SUFFIX } from "../lib/app-name";
+import { HERO_GIF_PLAY_MS } from "../lib/brand-mark";
 import { AppFonts } from "../lib/typography";
-import { useTheme } from "../lib/theme";
+import { ThemeColors, useTheme } from "../lib/theme";
 
-const openingHeroGif = require("../assets/readme-hero.gif");
+const openingHeroGif = require("../assets/hero-animation.gif");
 
-/** Keep in sync with scripts/compose-readme-hero.mjs (CANVAS / HERO_SIZE). */
-const OPENING_GIF_CANVAS = 220;
-const OPENING_GIF_ART = 200;
-/** On-screen hero size. */
+/** On-screen hero — GIF is 512px native; displayed at MARK_BOX for splash layout.
+ *  Native splash (splash-icon.png @ 200px) shows the static mark until this GIF loads. */
 const MARK_BOX = 200;
-/** Visible logo width/height after cropping GIF canvas padding. */
-const OPENING_ART_BOX = Math.round((MARK_BOX * OPENING_GIF_ART) / OPENING_GIF_CANVAS);
-const OPENING_ART_INSET = (MARK_BOX - OPENING_ART_BOX) / 2;
-/** 45 frames × 50 ms (gifsicle delay). */
-const GIF_PLAY_MS = 2250;
-const POP_IN_MS = 340;
-const HOLD_MS = 160;
-const EXIT_MS = 260;
-const TOTAL_BUDGET_MS = POP_IN_MS + GIF_PLAY_MS + HOLD_MS + EXIT_MS + 400;
+/** Keep in sync with compose-readme-hero.mjs (slide-in → rest peek). */
+const GIF_PLAY_MS = HERO_GIF_PLAY_MS;
+const POP_IN_MS = 280;
+const HOLD_MS = 80;
+const EXIT_MS = 220;
+const MIN_HERO_MS = POP_IN_MS + GIF_PLAY_MS + HOLD_MS;
+const MAX_BOOTSTRAP_MS = 30_000;
 
 const easePop = Easing.out(Easing.cubic);
 
-export default function AppOpeningAnimation({ onFinish }: { onFinish: () => void }) {
+type Props = {
+  onFinish: () => void;
+  fontsReady?: boolean;
+  readyToExit?: boolean;
+  statusLabel?: string | null;
+  loadProgress?: number | null;
+};
+
+export default function AppOpeningAnimation({
+  onFinish,
+  fontsReady = true,
+  readyToExit = true,
+  statusLabel = null,
+  loadProgress = null,
+}: Props) {
   const { colors, isDark } = useTheme();
-  const styles = useMemo(() => createStyles(colors.bg), [colors.bg]);
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const titleColor = isDark ? "#ffffff" : colors.primaryLight;
 
   const overlayOpacity = useRef(new Animated.Value(1)).current;
   const markScale = useRef(new Animated.Value(0.9)).current;
   const markOpacity = useRef(new Animated.Value(0)).current;
   const titleOpacity = useRef(new Animated.Value(0)).current;
+  const statusOpacity = useRef(new Animated.Value(0)).current;
+  const progressWidth = useRef(new Animated.Value(0)).current;
   const closingRef = useRef(false);
-  const finaleScheduledRef = useRef(false);
-  const gifLoadedRef = useRef(false);
+  const [minHeroDone, setMinHeroDone] = useState(false);
 
   const closeOverlay = useCallback(() => {
     if (closingRef.current) return;
@@ -49,17 +61,21 @@ export default function AppOpeningAnimation({ onFinish }: { onFinish: () => void
     });
   }, [onFinish, overlayOpacity]);
 
-  const scheduleFinale = useCallback(() => {
-    if (finaleScheduledRef.current) return;
-    finaleScheduledRef.current = true;
-    setTimeout(() => closeOverlay(), GIF_PLAY_MS + HOLD_MS);
-  }, [closeOverlay]);
+  useEffect(() => {
+    const timer = setTimeout(() => setMinHeroDone(true), MIN_HERO_MS);
+    return () => clearTimeout(timer);
+  }, []);
 
-  const handleGifLoad = useCallback(() => {
-    if (gifLoadedRef.current) return;
-    gifLoadedRef.current = true;
-    scheduleFinale();
-  }, [scheduleFinale]);
+  useEffect(() => {
+    if (readyToExit && minHeroDone) {
+      closeOverlay();
+    }
+  }, [readyToExit, minHeroDone, closeOverlay]);
+
+  useEffect(() => {
+    const fallback = setTimeout(() => closeOverlay(), MAX_BOOTSTRAP_MS);
+    return () => clearTimeout(fallback);
+  }, [closeOverlay]);
 
   useEffect(() => {
     Animated.parallel([
@@ -75,19 +91,53 @@ export default function AppOpeningAnimation({ onFinish }: { onFinish: () => void
         easing: easePop,
         useNativeDriver: true,
       }),
-      Animated.timing(titleOpacity, {
-        toValue: 1,
-        duration: POP_IN_MS,
-        easing: easePop,
-        useNativeDriver: true,
-      }),
     ]).start();
-  }, [markOpacity, markScale, titleOpacity]);
+  }, [markOpacity, markScale]);
 
   useEffect(() => {
-    const fallback = setTimeout(() => closeOverlay(), TOTAL_BUDGET_MS);
-    return () => clearTimeout(fallback);
-  }, [closeOverlay]);
+    if (!fontsReady) {
+      titleOpacity.setValue(0);
+      return;
+    }
+    Animated.timing(titleOpacity, {
+      toValue: 1,
+      duration: POP_IN_MS,
+      easing: easePop,
+      useNativeDriver: true,
+    }).start();
+  }, [fontsReady, titleOpacity]);
+
+  const waitingForBootstrap = minHeroDone && !readyToExit;
+  const displayStatus =
+    statusLabel?.trim() ||
+    (waitingForBootstrap ? "Getting ready…" : null);
+
+  useEffect(() => {
+    Animated.timing(statusOpacity, {
+      toValue: displayStatus ? 1 : 0,
+      duration: 180,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [displayStatus, statusOpacity]);
+
+  useEffect(() => {
+    const ratio =
+      loadProgress == null ? 0 : Math.min(1, Math.max(0, loadProgress));
+    Animated.timing(progressWidth, {
+      toValue: ratio,
+      duration: 240,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [loadProgress, progressWidth]);
+
+  const progressFillWidth = progressWidth.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0%", "100%"],
+  });
+
+  const showProgress = loadProgress != null && loadProgress > 0;
 
   return (
     <Animated.View style={[styles.root, { opacity: overlayOpacity }]}>
@@ -105,8 +155,8 @@ export default function AppOpeningAnimation({ onFinish }: { onFinish: () => void
             <Image
               source={openingHeroGif}
               style={styles.markGif}
-              resizeMode="contain"
-              onLoad={handleGifLoad}
+              resizeMode="stretch"
+              fadeDuration={0}
             />
           </Animated.View>
 
@@ -116,17 +166,38 @@ export default function AppOpeningAnimation({ onFinish }: { onFinish: () => void
               {APP_BRAND_TITLE_SUFFIX}
             </Text>
           </Animated.View>
+
+          <Animated.View
+            style={[styles.statusBlock, { opacity: statusOpacity }]}
+            pointerEvents="none"
+          >
+            {displayStatus ? (
+              <Text style={[styles.statusText, { color: colors.textMuted }]} numberOfLines={1}>
+                {displayStatus}
+              </Text>
+            ) : null}
+            {showProgress ? (
+              <View style={[styles.progressTrack, { backgroundColor: colors.borderStrong }]}>
+                <Animated.View
+                  style={[
+                    styles.progressFill,
+                    { width: progressFillWidth, backgroundColor: colors.primary },
+                  ]}
+                />
+              </View>
+            ) : null}
+          </Animated.View>
         </View>
       </View>
     </Animated.View>
   );
 }
 
-function createStyles(appBg: string) {
+function createStyles(colors: ThemeColors) {
   return StyleSheet.create({
     root: {
       ...StyleSheet.absoluteFillObject,
-      backgroundColor: appBg,
+      backgroundColor: colors.bg,
       zIndex: 100,
     },
     stage: {
@@ -138,39 +209,61 @@ function createStyles(appBg: string) {
     heroColumn: {
       alignItems: "center",
       justifyContent: "center",
+      width: MARK_BOX,
     },
     markWrap: {
-      width: OPENING_ART_BOX,
-      height: OPENING_ART_BOX,
-      overflow: "hidden",
+      width: MARK_BOX,
+      height: MARK_BOX,
     },
     markGif: {
       width: MARK_BOX,
       height: MARK_BOX,
-      marginLeft: -OPENING_ART_INSET,
-      marginTop: -OPENING_ART_INSET,
     },
     titleBlock: {
-      width: OPENING_ART_BOX,
-      marginTop: 10,
+      minWidth: MARK_BOX,
+      marginTop: 12,
       alignItems: "flex-end",
     },
     title: {
       fontFamily: AppFonts.openingBrand,
-      fontSize: 32,
+      fontSize: 40,
       letterSpacing: 1.1,
-      lineHeight: 34,
+      lineHeight: 44,
       textAlign: "right",
       includeFontPadding: false,
     },
     titleSuffix: {
       fontFamily: AppFonts.androidBrand,
-      fontSize: 11,
+      fontSize: 13,
       letterSpacing: 0.2,
-      lineHeight: 13,
-      marginTop: 2,
+      lineHeight: 16,
+      marginTop: 3,
       textAlign: "right",
       includeFontPadding: false,
+    },
+    statusBlock: {
+      width: MARK_BOX + 48,
+      marginTop: 14,
+      alignItems: "center",
+      gap: 8,
+      minHeight: 28,
+    },
+    statusText: {
+      fontFamily: AppFonts.brandSubtitle,
+      fontSize: 13,
+      lineHeight: 16,
+      textAlign: "center",
+      includeFontPadding: false,
+    },
+    progressTrack: {
+      width: "100%",
+      height: 3,
+      borderRadius: 2,
+      overflow: "hidden",
+    },
+    progressFill: {
+      height: 3,
+      borderRadius: 2,
     },
   });
 }

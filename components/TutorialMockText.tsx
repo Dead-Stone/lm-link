@@ -1,6 +1,8 @@
 import { BlurView } from "expo-blur";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import {
+  Animated,
+  Easing,
   Platform,
   Pressable,
   StyleProp,
@@ -10,9 +12,8 @@ import {
   View,
   ViewStyle,
 } from "react-native";
+import { useTypingReveal } from "../lib/use-typing-reveal";
 import { radii } from "../lib/theme";
-
-const CHAR_MS = 12;
 
 const blurProps =
   Platform.OS === "android"
@@ -166,51 +167,68 @@ type TypingProps = {
   active?: boolean;
 };
 
-/** Character-by-character typing — for tutorial walk copy beside the Android guide. */
+/** Smooth rAF typing — for tutorial walk copy beside the Android guide. */
 export function TutorialTypingText({
   text,
   style,
   replayKey = text,
-  delay = 120,
-  charMs = CHAR_MS,
+  delay = 80,
+  charMs = 14,
   showCursor = true,
   active = true,
 }: TypingProps) {
-  const [visible, setVisible] = useState(0);
+  const visible = useTypingReveal({ text, replayKey, delay, charMs, active });
+  const fade = useRef(new Animated.Value(0)).current;
+  const cursorOpacity = useRef(new Animated.Value(1)).current;
+  const cursorLoop = useRef<Animated.CompositeAnimation | null>(null);
 
   useEffect(() => {
     if (!active) {
-      setVisible(0);
+      fade.setValue(0);
+      cursorLoop.current?.stop();
       return;
     }
 
-    setVisible(0);
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    fade.setValue(0);
+    Animated.timing(fade, {
+      toValue: 1,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
 
-    const step = (next: number) => {
-      if (cancelled) return;
-      setVisible(next);
-      if (next < text.length) {
-        timer = setTimeout(() => step(next + 1), charMs);
-      }
-    };
+    cursorLoop.current?.stop();
+    cursorLoop.current = Animated.loop(
+      Animated.sequence([
+        Animated.timing(cursorOpacity, {
+          toValue: 0.25,
+          duration: 480,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+        Animated.timing(cursorOpacity, {
+          toValue: 1,
+          duration: 480,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    cursorLoop.current.start();
 
-    timer = setTimeout(() => step(1), delay);
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [text, replayKey, delay, charMs, active]);
+    return () => cursorLoop.current?.stop();
+  }, [active, replayKey, fade, cursorOpacity]);
 
   const shown = text.slice(0, visible);
-  const cursor = showCursor && visible < text.length ? "▍" : "";
+  const typing = showCursor && visible < text.length;
 
   return (
-    <Text style={style}>
+    <Animated.Text style={[style, { opacity: fade }]}>
       {shown}
-      {cursor ? <Text style={styles.cursor}>{cursor}</Text> : null}
-    </Text>
+      {typing ? (
+        <Animated.Text style={[styles.cursor, { opacity: cursorOpacity }]}>▍</Animated.Text>
+      ) : null}
+    </Animated.Text>
   );
 }
 

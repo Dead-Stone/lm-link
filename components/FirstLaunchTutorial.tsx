@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Dimensions,
   FlatList,
@@ -12,22 +12,35 @@ import {
   Text,
   View,
 } from "react-native";
+import Animated, {
+  Easing,
+  useAnimatedScrollHandler,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { GESTURE_TIMING_ENTER } from "../lib/gesture-motion";
 import { FIRST_LAUNCH_SLIDES, TutorialSlide } from "../lib/setup-guide";
+import { screenHeaderTopPadding } from "../lib/safe-area-layout";
 import { markOnboardingDone } from "../lib/storage";
-import { getSettingsPalette, radii, ThemeColors, useTheme } from "../lib/theme";
+import { getSettingsPalette, ThemeColors, useTheme } from "../lib/theme";
 import DotGridBackground from "./DotGridBackground";
 import SetupGuideIllustration from "./SetupGuideIllustrations";
 import TransparentSheet from "./TransparentSheet";
 import TutorialAndroidGuide, { TutorialSlideNote } from "./TutorialAndroidGuide";
+import TutorialProgressDots from "./TutorialProgressDots";
+import TutorialSlideFrame from "./TutorialSlideFrame";
 
 const SLIDES = FIRST_LAUNCH_SLIDES;
 const PAGE_WIDTH = Dimensions.get("window").width;
+const SCROLL_DECELERATION = 0.988;
+
+const AnimatedFlatList = Animated.createAnimatedComponent(FlatList<TutorialSlide>);
 
 type Props = {
   onComplete: () => void;
   mode?: "onboarding" | "replay";
-  /** Frosted overlay on the app vs standalone full-screen (replay from settings). */
   presentation?: "glass" | "fullscreen";
 };
 
@@ -49,9 +62,47 @@ export default function FirstLaunchTutorial({
 
   const listRef = useRef<FlatList<TutorialSlide>>(null);
   const [page, setPage] = useState(0);
+  const scrollX = useSharedValue(0);
+  const headerOpacity = useSharedValue(1);
+  const headerTranslateY = useSharedValue(0);
+  const shellEnter = useSharedValue(isGlass ? 0 : 1);
 
   const isLast = page === SLIDES.length - 1;
   const currentSlide = SLIDES[page];
+
+  useEffect(() => {
+    if (!isGlass) return;
+    shellEnter.value = withTiming(1, GESTURE_TIMING_ENTER);
+  }, [isGlass, shellEnter]);
+
+  useEffect(() => {
+    headerOpacity.value = 0;
+    headerTranslateY.value = 8;
+    headerOpacity.value = withTiming(1, {
+      duration: 320,
+      easing: Easing.out(Easing.cubic),
+    });
+    headerTranslateY.value = withTiming(0, {
+      duration: 380,
+      easing: Easing.out(Easing.cubic),
+    });
+  }, [page, headerOpacity, headerTranslateY]);
+
+  const headerAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: headerOpacity.value,
+    transform: [{ translateY: headerTranslateY.value }],
+  }));
+
+  const glassShellStyle = useAnimatedStyle(() => ({
+    opacity: shellEnter.value,
+    transform: [{ translateY: (1 - shellEnter.value) * 18 }],
+  }));
+
+  const onScroll = useAnimatedScrollHandler({
+    onScroll: (event) => {
+      scrollX.value = event.contentOffset.x;
+    },
+  });
 
   const finish = useCallback(async () => {
     if (isReplay) {
@@ -105,40 +156,44 @@ export default function FirstLaunchTutorial({
   );
 
   const renderSlide = ({ item, index }: { item: TutorialSlide; index: number }) => {
+    const isActive = page === index;
+
     return (
       <View style={styles.slidePage}>
-        <ScrollView
-          style={styles.slideScrollFlex}
-          contentContainerStyle={[styles.slideScroll, styles.slideScrollContent]}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {item.illustration ? (
-            <View style={styles.illustrationWrap}>
-              <SetupGuideIllustration id={item.illustration} colors={palette} />
-            </View>
-          ) : null}
-        </ScrollView>
+        <TutorialSlideFrame index={index} scrollX={scrollX} pageWidth={PAGE_WIDTH}>
+          <ScrollView
+            style={styles.slideScrollFlex}
+            contentContainerStyle={[styles.slideScroll, styles.slideScrollContent]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {item.illustration ? (
+              <View style={styles.illustrationWrap}>
+                <SetupGuideIllustration id={item.illustration} colors={palette} />
+              </View>
+            ) : null}
+          </ScrollView>
 
-        <View style={[styles.guideDock, index === 0 && styles.guideDockEmergeClip]}>
-          <TutorialAndroidGuide
-            walk={item.androidWalk}
-            stepKey={index}
-            colors={colors}
-            isDark={isDark}
-            active={page === index}
-            emergeFromBottom={index === 0}
-          />
-        </View>
+          <View style={[styles.guideDock, index === 0 && styles.guideDockEmergeClip]}>
+            <TutorialAndroidGuide
+              walk={item.androidWalk}
+              stepKey={index}
+              colors={colors}
+              isDark={isDark}
+              active={isActive}
+              emergeFromBottom={index === 0}
+            />
+          </View>
 
-        <View
-          style={[
-            styles.slideNoteWrap,
-            { paddingBottom: Math.max(insets.bottom, 12) + 8 },
-          ]}
-        >
-          <TutorialSlideNote help={item.help} colors={colors} />
-        </View>
+          <View
+            style={[
+              styles.slideNoteWrap,
+              { paddingBottom: Math.max(insets.bottom, 12) + 8 },
+            ]}
+          >
+            <TutorialSlideNote help={item.help} colors={colors} active={isActive} />
+          </View>
+        </TutorialSlideFrame>
       </View>
     );
   };
@@ -157,8 +212,8 @@ export default function FirstLaunchTutorial({
         </View>
       ) : null}
 
-      <View style={[styles.topNav, { paddingTop: insets.top + 8 }]}>
-        <View style={styles.topNavHeader}>
+      <View style={[styles.topNav, { paddingTop: screenHeaderTopPadding(insets.top) }]}>
+        <Animated.View style={[styles.topNavHeader, headerAnimatedStyle]}>
           <View style={styles.topNavHeaderSide} />
           <View style={styles.topNavHeaderCenter}>
             {currentSlide.section ? (
@@ -181,7 +236,8 @@ export default function FirstLaunchTutorial({
               </Pressable>
             ) : null}
           </View>
-        </View>
+        </Animated.View>
+
         <View style={styles.topNavControls}>
           {page > 0 ? (
             <Pressable
@@ -197,14 +253,12 @@ export default function FirstLaunchTutorial({
             <View style={styles.navArrow} />
           )}
 
-          <View style={styles.dotsTrack}>
-            {SLIDES.map((_, i) => (
-              <View
-                key={i}
-                style={[styles.dot, i === page ? styles.dotActive : styles.dotInactive]}
-              />
-            ))}
-          </View>
+          <TutorialProgressDots
+            count={SLIDES.length}
+            scrollX={scrollX}
+            pageWidth={PAGE_WIDTH}
+            activeColor={palette.primaryLight}
+          />
 
           <Pressable
             onPress={goNext}
@@ -222,7 +276,7 @@ export default function FirstLaunchTutorial({
         </View>
       </View>
 
-      <FlatList
+      <AnimatedFlatList
         ref={listRef}
         style={styles.slideList}
         data={SLIDES}
@@ -232,9 +286,15 @@ export default function FirstLaunchTutorial({
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
         onMomentumScrollEnd={onScrollEnd}
         onScrollToIndexFailed={onScrollToIndexFailed}
-        initialNumToRender={SLIDES.length}
+        initialNumToRender={1}
+        maxToRenderPerBatch={2}
+        windowSize={3}
+        removeClippedSubviews={false}
+        decelerationRate={SCROLL_DECELERATION}
         getItemLayout={(_, index) => ({
           length: PAGE_WIDTH,
           offset: PAGE_WIDTH * index,
@@ -247,9 +307,9 @@ export default function FirstLaunchTutorial({
 
   if (isGlass) {
     return (
-      <View style={styles.glassRoot}>
+      <Animated.View style={[styles.glassRoot, glassShellStyle]}>
         <TransparentSheet style={styles.glassSheet}>{body}</TransparentSheet>
-      </View>
+      </Animated.View>
     );
   }
 
@@ -352,29 +412,6 @@ function createStyles(
     },
     navArrowPressed: {
       opacity: 0.55,
-    },
-    dotsTrack: {
-      flex: 1,
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "center",
-      gap: 5,
-      paddingHorizontal: 8,
-    },
-    dot: {
-      borderRadius: radii.pill,
-    },
-    dotInactive: {
-      width: 5,
-      height: 5,
-      backgroundColor: palette.primaryLight,
-      opacity: 0.28,
-    },
-    dotActive: {
-      width: 16,
-      height: 5,
-      backgroundColor: palette.primaryLight,
-      opacity: 1,
     },
     slideList: { flex: 1, zIndex: 1 },
     slidePage: {

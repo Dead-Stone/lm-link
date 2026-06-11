@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/readme-hero.gif" width="220" alt="LM Link — LM Studio logo with animated Android head (opening splash)" />
+<img src="assets/hero-animation.gif" width="220" alt="LM Link — LM Studio logo with animated Android head (opening splash)" />
 
 # LM Link for Android
 
@@ -82,7 +82,9 @@ The in-app **Setup Guide** and **tutorial** walk through each step with illustra
 
 ### Download
 
-- **Play Store** — *coming soon*  
+- **Install guide** — [dead-stone.github.io/lm-link/install.html](https://dead-stone.github.io/lm-link/install.html) (Play Store, APK, setup)  
+- **Play Store** — *rolling out* (`com.lmlink.android`)  
+- **APK** — [GitHub Releases](https://github.com/Dead-Stone/lm-link/releases/latest)  
 - **Build from source** — see [Development](#development) below  
 
 ---
@@ -112,7 +114,7 @@ npx expo start
 | Production AAB (local) | `npm run build:aab:local` → `builds/` |
 | Production AAB (EAS cloud) | `npm run build:aab` |
 
-Patches under [`patches/`](patches/) are applied automatically on `npm install`. Regenerate the README hero (`assets/readme-hero.gif`) from `assets/android-face-overlay.json` with `npm run compose-readme-hero` (requires [gifsicle](https://www.lcdf.org/gifsicle/): `brew install gifsicle`). See [CONTRIBUTING.md](CONTRIBUTING.md) for code style and PR workflow.
+Patches under [`patches/`](patches/) are applied automatically on `npm install`. The opening hero (`assets/hero-animation.gif`) can be regenerated from `assets/lm-studio-logo.png` + `assets/android-head-tutorial.json` with `npm run compose-readme-hero` (requires [gifsicle](https://www.lcdf.org/gifsicle/): `brew install gifsicle`). See [CONTRIBUTING.md](CONTRIBUTING.md) for code style and PR workflow.
 
 ### Tech stack
 

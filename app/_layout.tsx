@@ -14,14 +14,14 @@ import AppOpeningAnimation from "../components/AppOpeningAnimation";
 import FirstLaunchTutorial from "../components/FirstLaunchTutorial";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { AppProvider } from "../lib/context";
+import { AppProvider, useSettings } from "../lib/context";
 import { ErrorProvider } from "../lib/error-context";
 import { isOnboardingDone } from "../lib/storage";
 import { useTheme } from "../lib/theme";
 
 SplashScreen.preventAutoHideAsync();
+SplashScreen.setOptions({ fade: false, duration: 0 });
 
-// Inner component so it can access context
 function RootNavigator() {
   const { colors } = useTheme();
 
@@ -76,8 +76,9 @@ function ThemedStatusBar() {
 
 function AppShell() {
   const { colors } = useTheme();
+  const { isLoading, bootstrapSubtitle, bootstrapProgress } = useSettings();
   const [openingDone, setOpeningDone] = useState(false);
-  const [openingGateReady, setOpeningGateReady] = useState(false);
+  const [onboardingChecked, setOnboardingChecked] = useState(false);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const [tutorialDismissed, setTutorialDismissed] = useState(false);
   const [fontsLoaded] = useFonts({
@@ -90,38 +91,43 @@ function AppShell() {
   });
 
   useEffect(() => {
-    if (fontsLoaded) {
-      void SplashScreen.hideAsync();
-    }
-  }, [fontsLoaded]);
+    void SplashScreen.hideAsync();
+  }, []);
 
   useEffect(() => {
-    if (!fontsLoaded) return;
     void isOnboardingDone().then((done) => {
       setNeedsOnboarding(!done);
-      setOpeningGateReady(true);
+      setOnboardingChecked(true);
     });
-  }, [fontsLoaded]);
+  }, []);
 
+  const bootstrapReady = fontsLoaded && onboardingChecked && !isLoading;
   const showTutorial = needsOnboarding && openingDone && !tutorialDismissed;
-
-  if (!fontsLoaded || !openingGateReady) {
-    return null;
-  }
+  const appReady = openingDone && bootstrapReady;
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }}>
-      <ThemedStatusBar />
-      <RootNavigator />
       {!openingDone ? (
-        <AppOpeningAnimation onFinish={() => setOpeningDone(true)} />
-      ) : null}
-      {showTutorial ? (
-        <FirstLaunchTutorial
-          mode="onboarding"
-          presentation="glass"
-          onComplete={() => setTutorialDismissed(true)}
+        <AppOpeningAnimation
+          fontsReady={fontsLoaded}
+          readyToExit={bootstrapReady}
+          statusLabel={bootstrapSubtitle}
+          loadProgress={bootstrapProgress}
+          onFinish={() => setOpeningDone(true)}
         />
+      ) : null}
+      {appReady ? (
+        <>
+          <ThemedStatusBar />
+          <RootNavigator />
+          {showTutorial ? (
+            <FirstLaunchTutorial
+              mode="onboarding"
+              presentation="glass"
+              onComplete={() => setTutorialDismissed(true)}
+            />
+          ) : null}
+        </>
       ) : null}
     </GestureHandlerRootView>
   );

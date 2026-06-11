@@ -149,11 +149,6 @@ permalink: /install.html
     to { opacity: 1; transform: translateY(0); }
   }
 
-  @keyframes pulse-glow {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(124, 108, 240, 0.3), 0 16px 48px var(--accent-shadow); }
-    50% { box-shadow: 0 0 0 10px rgba(124, 108, 240, 0), 0 20px 56px var(--accent-shadow); }
-  }
-
   .page {
     position: relative;
     z-index: 1;
@@ -168,19 +163,18 @@ permalink: /install.html
     animation: rise 0.65s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
 
-  .hero-mark {
-    width: 128px;
-    height: 128px;
+  .hero-gif {
+    width: 180px;
+    height: 180px;
     margin: 0 auto 24px;
     border-radius: 28px;
     display: block;
-    animation: pulse-glow 4s ease-in-out infinite;
   }
 
   @media (min-width: 520px) {
-    .hero-mark {
-      width: 144px;
-      height: 144px;
+    .hero-gif {
+      width: 220px;
+      height: 220px;
       border-radius: 32px;
     }
   }
@@ -534,11 +528,11 @@ permalink: /install.html
   <div class="page">
     <header class="hero">
       <img
-        class="hero-mark"
-        src="https://raw.githubusercontent.com/Dead-Stone/lm-link/master/assets/icon.png"
-        width="144"
-        height="144"
-        alt="LM Link app icon"
+        class="hero-gif"
+        src="./hero-animation.gif"
+        width="220"
+        height="220"
+        alt="LM Link — LM Studio logo with animated Android head"
       />
       <p class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span> Free · Open source · MIT</p>
       <h1>
